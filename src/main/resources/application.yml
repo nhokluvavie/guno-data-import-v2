@@ -7,13 +7,13 @@ spring:
 
   # Database Configuration
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/guno_data}
-    username: ${DB_USERNAME:guno_user}
-    password: ${DB_PASSWORD:guno_pass}
+    url: jdbc:postgresql://103.97.125.92:5432/guno_db?useSSL=false
+    username: guno_user
+    password: UYUgjL80moKrc6WTDLbg
     driver-class-name: org.postgresql.Driver
 
     hikari:
-      maximum-pool-size: ${DB_POOL_SIZE:20}
+      maximum-pool-size: 20
       minimum-idle: 5
       connection-timeout: 30000
       idle-timeout: 600000
@@ -62,11 +62,11 @@ api:
     retry-delay-ms: 1000
 
   facebook:
-    base-url: ${FACEBOOK_API_URL:http://localhost:8080/api/facebook}
+    base-url: https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search
     headers:
-      Authorization: ${FACEBOOK_AUTH_TOKEN:}
+      Authorization: x-webhook-api-key
       Content-Type: application/json
-      X-API-Key: ${FACEBOOK_API_KEY:}
+      X-API-Key: iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr
     timeout-seconds: 600
     page-size: 1000
     max-retries: 5

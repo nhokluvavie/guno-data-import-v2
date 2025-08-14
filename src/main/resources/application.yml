@@ -1,0 +1,125 @@
+spring:
+  application:
+    name: guno-data-import
+
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
+  # Database Configuration
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/guno_data}
+    username: ${DB_USERNAME:guno_user}
+    password: ${DB_PASSWORD:guno_pass}
+    driver-class-name: org.postgresql.Driver
+
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jackson:
+    time-zone: Asia/Ho_Chi_Minh
+    date-format: yyyy-MM-dd HH:mm:ss
+
+  task:
+    scheduling:
+      pool:
+        size: 5
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# API Configuration - Local APIs
+api:
+  shopee:
+    base-url: ${SHOPEE_API_URL:http://localhost:8080/api/shopee}
+    headers:
+      Authorization: ${SHOPEE_AUTH_TOKEN:}
+      Content-Type: application/json
+      X-API-Key: ${SHOPEE_API_KEY:}
+    timeout-seconds: 300
+    page-size: 1500
+    max-retries: 3
+    retry-delay-ms: 1000
+
+  tiktok:
+    base-url: ${TIKTOK_API_URL:http://localhost:8080/api/tiktok}
+    headers:
+      Authorization: ${TIKTOK_AUTH_TOKEN:}
+      Content-Type: application/json
+      X-API-Key: ${TIKTOK_API_KEY:}
+    timeout-seconds: 300
+    page-size: 1500
+    max-retries: 3
+    retry-delay-ms: 1000
+
+  facebook:
+    base-url: ${FACEBOOK_API_URL:http://localhost:8080/api/facebook}
+    headers:
+      Authorization: ${FACEBOOK_AUTH_TOKEN:}
+      Content-Type: application/json
+      X-API-Key: ${FACEBOOK_API_KEY:}
+    timeout-seconds: 600
+    page-size: 1000
+    max-retries: 5
+    retry-delay-ms: 2000
+
+  # Common API settings
+  common:
+    connect-timeout-ms: 10000
+    read-timeout-ms: 30000
+
+# Processing Configuration
+processing:
+  parallel:
+    enabled: true
+    thread-pool-size: 5
+    timeout-minutes: 15
+
+  batch:
+    size: 1000
+    enabled: true
+    max-batch-size: 5000
+
+  validation:
+    enabled: true
+    skip-invalid-records: true
+
+# Scheduler Configuration
+scheduler:
+  import:
+    enabled: true
+    cron: "0 0 */2 * * *"  # Every 2 hours
+    use-parallel: true
+    auto-start: false
+
+# Development vs Production settings
+dev:
+  api:
+    timeout-seconds: 60
+    page-size: 100
+    max-retries: 1
+  processing:
+    batch-size: 100
+    thread-pool-size: 2
+  logging:
+    level: DEBUG
+
+prod:
+  api:
+    timeout-seconds: 300
+    page-size: 1500
+    max-retries: 3
+  processing:
+    batch-size: 1000
+    thread-pool-size: 5
+  logging:
+    level: INFO

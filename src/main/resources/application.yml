@@ -71,6 +71,8 @@ api:
     page-size: 1000
     max-retries: 5
     retry-delay-ms: 2000
+    default-date: ""            # Empty = use today's date
+    filter-date: "update"
 
   # Common API settings
   common:

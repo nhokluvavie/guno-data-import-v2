@@ -1,0 +1,88 @@
+spring:
+  application:
+    name: guno-data-import-test
+
+  # Test Database Configuration
+  datasource:
+    url: jdbc:postgresql://103.97.125.92:5432/guno_db_test?useSSL=false
+    username: guno_user
+    password: UYUgjL80moKrc6WTDLbg
+    driver-class-name: org.postgresql.Driver
+
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 900000
+
+  jackson:
+    time-zone: Asia/Ho_Chi_Minh
+    date-format: yyyy-MM-dd HH:mm:ss
+
+  task:
+    scheduling:
+      pool:
+        size: 2
+
+# Test API Configuration - Same as production for real API testing
+api:
+  facebook:
+    base-url: https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search
+    headers:
+      Authorization: x-webhook-api-key
+      X-API-Key: iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr
+    timeout-seconds: 300
+    page-size: 100  # Smaller page size for testing
+    max-retries: 3
+    retry-delay-ms: 1000
+    default-date: "2025-08-12"  # Configurable date for testing
+    filter-date: "update"       # Default filter-date
+
+  # Common API settings for test
+  common:
+    connect-timeout-ms: 10000
+    read-timeout-ms: 30000
+
+# Test Processing Configuration
+processing:
+  parallel:
+    enabled: false  # Disable parallel for simpler testing
+    thread-pool-size: 2
+    timeout-minutes: 10
+
+  batch:
+    size: 100  # Smaller batch size for testing
+    enabled: true
+    max-batch-size: 500
+
+  validation:
+    enabled: true
+    skip-invalid-records: false  # Strict validation in tests
+
+# Disable scheduler for tests
+scheduler:
+  import:
+    enabled: false  # Don't run scheduled jobs during tests
+    cron: "0 0 */6 * * *"
+    use-parallel: false
+    auto-start: false
+
+# Test Logging Configuration
+logging:
+  level:
+    com.guno.dataimport: DEBUG
+    org.springframework.jdbc: DEBUG
+    org.springframework.web.client: DEBUG  # Log HTTP requests
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+# Management endpoints for test monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always

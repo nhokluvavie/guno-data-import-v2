@@ -1,5 +1,6 @@
 package com.guno.dataimport.api.client;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,6 +11,8 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -32,33 +35,51 @@ public class FacebookApiClient {
     @Value("${api.facebook.headers.X-API-Key:}")
     private String apiKey;
 
-    @Value("${api.facebook.timeout-seconds:600}")
-    private int timeoutSeconds;
-
     @Value("${api.facebook.page-size:1000}")
     private int defaultPageSize;
 
     @Value("${api.facebook.max-retries:5}")
     private int maxRetries;
 
+    @Value("${api.facebook.default-date:}")
+    private String defaultDate; // Format: yyyy-MM-dd
+
+    @Value("${api.facebook.filter-date:update}")
+    private String defaultFilterDate;
+
     /**
-     * Fetch Facebook orders from API
+     * Fetch Facebook orders from API with default date (today)
      */
     public FacebookApiResponse fetchOrders() {
-        return fetchOrders(1, defaultPageSize);
+        String date = defaultDate.isEmpty() ? LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : defaultDate;
+        return fetchOrders(date, 1, defaultPageSize);
     }
 
     /**
-     * Fetch orders with pagination
+     * Fetch orders with specific date
      */
-    public FacebookApiResponse fetchOrders(int page, int pageSize) {
-        String url = baseUrl + "/orders";
+    public FacebookApiResponse fetchOrders(String date) {
+        return fetchOrders(date, 1, defaultPageSize);
+    }
 
+    /**
+     * Fetch orders with pagination and date
+     */
+    public FacebookApiResponse fetchOrders(String date, int page, int pageSize) {
+        return fetchOrders(date, page, pageSize, defaultFilterDate);
+    }
+
+    /**
+     * Fetch orders with full parameters
+     */
+    public FacebookApiResponse fetchOrders(String date, int page, int pageSize, String filterDate) {
         Map<String, Object> params = new HashMap<>();
+        params.put("date", date);
         params.put("page", page);
         params.put("limit", pageSize);
+        params.put("filter-date", filterDate);
 
-        return callApiWithRetry(url, params);
+        return callApiWithRetry(baseUrl, params);
     }
 
     /**
@@ -69,23 +90,29 @@ public class FacebookApiClient {
 
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                log.info("Calling Facebook API - attempt {}/{}", attempt, maxRetries);
+                log.info("Calling Facebook API - attempt {}/{}, params: {}", attempt, maxRetries, params);
 
-                ResponseEntity<FacebookApiResponse> response = restTemplate.exchange(
+                ResponseEntity<String> response = restTemplate.exchange(
                         buildUrlWithParams(url, params),
                         HttpMethod.GET,
                         createHttpEntity(),
-                        FacebookApiResponse.class
+                        String.class
                 );
 
-                if (response.getBody() != null && response.getBody().isSuccess()) {
-                    log.info("Successfully fetched {} Facebook orders",
-                            response.getBody().getOrderCount());
-                    return response.getBody();
+                // Debug raw response
+                log.debug("Raw API Response: {}", response.getBody());
+
+                // Parse manually to FacebookApiResponse
+                ObjectMapper objectMapper = new ObjectMapper();
+                FacebookApiResponse apiResponse = objectMapper.readValue(response.getBody(), FacebookApiResponse.class);
+
+                if (apiResponse != null) {
+                    log.info("Successfully fetched {} Facebook orders for date: {}",
+                            apiResponse.getOrderCount(), params.get("date"));
+                    return apiResponse;
                 }
 
-                log.warn("Facebook API returned unsuccessful response: {}",
-                        response.getBody() != null ? response.getBody().getMessage() : "null");
+                log.warn("Facebook API returned null response body");
 
             } catch (Exception e) {
                 lastException = e;
@@ -112,14 +139,10 @@ public class FacebookApiClient {
      */
     public boolean isApiAvailable() {
         try {
-            String healthUrl = baseUrl + "/health";
-            ResponseEntity<String> response = restTemplate.exchange(
-                    healthUrl,
-                    HttpMethod.GET,
-                    createHttpEntity(),
-                    String.class
-            );
-            return response.getStatusCode().is2xxSuccessful();
+            // Use a simple API call to check availability
+            String testDate = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            FacebookApiResponse response = fetchOrders(testDate, 1, 1);
+            return response.getStatus() != null && response.getStatus() == 200;
         } catch (Exception e) {
             log.warn("Facebook API availability check failed: {}", e.getMessage());
             return false;
@@ -130,7 +153,7 @@ public class FacebookApiClient {
         HttpHeaders headers = new HttpHeaders();
         headers.set("Content-Type", "application/json");
 
-        if (authToken != null && !authToken.isEmpty() && apiKey != null && !apiKey.isEmpty()) {
+        if (authToken != null && !authToken.isEmpty() & apiKey != null && !apiKey.isEmpty()) {
             headers.set(authToken, apiKey);
         }
 

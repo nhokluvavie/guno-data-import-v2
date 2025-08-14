@@ -20,7 +20,7 @@ import java.util.List;
 public class FacebookOrderDto {
 
     @JsonProperty("id")
-    private Long id;
+    private String id;
 
     @JsonProperty("cod")
     private Long cod;

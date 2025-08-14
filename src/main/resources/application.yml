@@ -7,7 +7,7 @@ spring:
 
   # Database Configuration
   datasource:
-    url: jdbc:postgresql://103.97.125.92:5432/guno_db?useSSL=false
+    url: jdbc:postgresql://103.97.125.92:5432/guno_db_test?useSSL=false
     username: guno_user
     password: UYUgjL80moKrc6WTDLbg
     driver-class-name: org.postgresql.Driver

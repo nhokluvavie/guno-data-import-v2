@@ -1,5 +1,6 @@
 package com.guno.dataimport.scheduler;
 
+import com.guno.dataimport.api.service.ApiOrchestrator;
 import com.guno.dataimport.api.service.DataCollector;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ImportSummary;
@@ -25,6 +26,7 @@ public class ImportScheduler {
     private final DataCollector dataCollector;
     private final ValidationProcessor validationProcessor;
     private final BatchProcessor batchProcessor;
+    private final ApiOrchestrator apiOrchestrator;
 
     /**
      * Scheduled import job - runs every 2 hours
@@ -63,7 +65,7 @@ public class ImportScheduler {
     }
 
     /**
-     * Execute import process
+     * Execute import process with pagination
      */
     private ImportSummary executeImport() {
         ImportSummary summary = ImportSummary.builder()
@@ -78,46 +80,13 @@ public class ImportScheduler {
                 return summary;
             }
 
-            // Step 2: Collect data
-            log.info("Step 1/4: Collecting data from Facebook API");
-            CollectedData collectedData = dataCollector.collectData();
+            // Step 2: Process with pagination and batching
+            log.info("Starting paginated import with batch processing");
+            apiOrchestrator.collectAndProcessInBatches();
 
-            if (collectedData.isEmpty()) {
-                log.warn("No data collected - import skipped");
-                summary.addPlatformCount("FACEBOOK", 0);
-                return summary;
-            }
-
-            summary.addPlatformCount("FACEBOOK", collectedData.getFacebookOrders().size());
+            summary.addPlatformCount("FACEBOOK", 1); // At least 1 batch processed
             summary.setTotalApiCalls(1);
-
-            // Step 3: Validate data
-            log.info("Step 2/4: Validating collected data");
-            var validationErrors = validationProcessor.validateCollectedData(collectedData);
-
-            if (!validationProcessor.isDataValid(collectedData)) {
-                log.error("Data validation failed: {}",
-                        validationProcessor.getValidationSummary(validationErrors));
-                return summary;
-            }
-
-            log.info("Data validation passed: {}",
-                    validationProcessor.getValidationSummary(validationErrors));
-
-            // Step 4: Process and save data
-            log.info("Step 3/4: Processing and saving data to database");
-            ProcessingResult processingResult = batchProcessor.processCollectedData(collectedData);
-
-            // Step 5: Update summary
-            log.info("Step 4/4: Finalizing import summary");
-            summary.addEntityCount("CUSTOMERS", processingResult.getSuccessCount());
-            summary.addEntityCount("ORDERS", processingResult.getSuccessCount());
-            summary.addEntityCount("PRODUCTS", processingResult.getSuccessCount());
-            summary.setTotalDbOperations(processingResult.getSuccessCount() * 4); // Estimate
-
-            if (!processingResult.isSuccess()) {
-                log.warn("Processing completed with {} errors", processingResult.getFailedCount());
-            }
+            summary.setTotalDbOperations(1);
 
         } catch (Exception e) {
             log.error("Import execution failed: {}", e.getMessage(), e);

@@ -33,7 +33,7 @@ api:
       Authorization: x-webhook-api-key
       X-API-Key: iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr
     timeout-seconds: 300
-    page-size: 100  # Smaller page size for testing
+    page-size: 1  # Smaller page size for testing
     max-retries: 3
     retry-delay-ms: 1000
     default-date: "2025-08-12"  # Configurable date for testing
@@ -74,6 +74,7 @@ logging:
     com.guno.dataimport: DEBUG
     org.springframework.jdbc: DEBUG
     org.springframework.web.client: DEBUG  # Log HTTP requests
+    com.guno.dataimport.api.client.FacebookApiClient: DEBUG
   pattern:
     console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
 

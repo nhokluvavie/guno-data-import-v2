@@ -11,6 +11,7 @@ import java.util.List;
 
 /**
  * Facebook Order DTO - Main order entity from Facebook API
+ * Note: Order data is nested in "data" field in API response
  */
 @Data
 @Builder
@@ -19,109 +20,156 @@ import java.util.List;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class FacebookOrderDto {
 
-    @JsonProperty("id")
-    private String id;
-
-    @JsonProperty("cod")
-    private Long cod;
-
-    @JsonProperty("tax")
-    private Long tax;
-
-    @JsonProperty("cash")
-    private Long cash;
-
-    @JsonProperty("link")
-    private String link;
-
-    @JsonProperty("note")
-    private String note;
-
-    @JsonProperty("type")
-    private String type;
+    @JsonProperty("order_id")
+    private String orderId;
 
     @JsonProperty("status")
-    private Integer status;
+    private Integer status; // Main order status
 
-    // Financial data
-    @JsonProperty("total_price_after_sub_discount")
-    private Long totalPriceAfterSubDiscount;
+    @JsonProperty("data")
+    private FacebookOrderData data; // Nested order data
 
-    @JsonProperty("discount")
-    private Long discount;
+    // Helper methods to access nested data
+    public String getOrderId() {
+        return data != null ? data.getId().toString() : orderId;
+    }
 
-    @JsonProperty("shipping_fee")
-    private Long shippingFee;
+    public Long getCod() {
+        return data != null ? data.getCod() : null;
+    }
 
-    @JsonProperty("surcharge")
-    private Long surcharge;
+    public Long getTax() {
+        return data != null ? data.getTax() : null;
+    }
 
-    @JsonProperty("buyer_total_amount")
-    private Long buyerTotalAmount;
+    public Long getCash() {
+        return data != null ? data.getCash() : null;
+    }
 
-    // Items and customer
-    @JsonProperty("items")
-    @Builder.Default
-    private List<FacebookItemDto> items = new ArrayList<>();
+    public Long getTotalPriceAfterSubDiscount() {
+        return data != null ? data.getTotalPriceAfterSubDiscount() : null;
+    }
 
-    @JsonProperty("customer")
-    private FacebookCustomer customer;
+    public Long getDiscount() {
+        return data != null ? data.getTotalDiscount() : null;
+    }
 
-    // Address and contact info
-    @JsonProperty("bill_phone_number")
-    private String billPhoneNumber;
+    public Long getShippingFee() {
+        return data != null ? data.getShippingFee() : null;
+    }
 
-    @JsonProperty("bill_email")
-    private String billEmail;
+    public List<FacebookItemDto> getItems() {
+        return data != null ? data.getItems() : new ArrayList<>();
+    }
 
-    @JsonProperty("new_province_name")
-    private String newProvinceName;
+    public FacebookCustomer getCustomer() {
+        return data != null ? data.getCustomer() : null;
+    }
 
-    @JsonProperty("new_district_name")
-    private String newDistrictName;
+    public String getCreatedAt() {
+        return data != null ? data.getInsertedAt() : null;
+    }
 
-    @JsonProperty("new_commune_id")
-    private String newCommuneId;
+    public String getBillPhoneNumber() {
+        return data != null ? data.getBillPhoneNumber() : null;
+    }
 
-    @JsonProperty("new_province_id")
-    private String newProvinceId;
+    public String getNewProvinceName() {
+        return data != null ? data.getShippingAddress() != null ?
+                data.getShippingAddress().getProvinceName() : null : null;
+    }
 
-    @JsonProperty("new_full_address")
-    private String newFullAddress;
+    public String getNewDistrictName() {
+        return data != null ? data.getShippingAddress() != null ?
+                data.getShippingAddress().getDistrictName() : null : null;
+    }
 
-    // Order source and tracking
-    @JsonProperty("order_sources_name")
-    private String orderSourcesName;
+    public String getAdId() {
+        return data != null ? data.getAdId() : null;
+    }
 
-    @JsonProperty("ad_id")
-    private String adId;
+    public Integer getStatus() {
+        return status; // Main status
+    }
 
-    @JsonProperty("system_id")
-    private Long systemId;
+    public Integer getNestedStatus() {
+        return data != null ? data.getStatus() : null; // Nested status
+    }
 
-    @JsonProperty("note_print")
-    private String notePrint;
-
-    // Timestamps
-    @JsonProperty("created_at")
-    private String createdAt;
-
-    @JsonProperty("updated_at")
-    private String updatedAt;
-
-    @JsonProperty("estimate_delivery_date")
-    private String estimateDeliveryDate;
-
-    // Helper methods
-    public double getTotalAmountAsDouble() {
-        return totalPriceAfterSubDiscount != null ? totalPriceAfterSubDiscount.doubleValue() : 0.0;
+    public String getStatusName() {
+        return data != null ? data.getStatusName() : null;
     }
 
     public boolean isCodOrder() {
-        return cod != null && cod > 0;
+        return getCod() != null && getCod() > 0;
     }
 
-    public String getOrderId() {
-        return id != null ? id.toString() : null;
+    public double getTotalAmountAsDouble() {
+        Long total = getTotalPriceAfterSubDiscount();
+        return total != null ? total.doubleValue() : 0.0;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class FacebookOrderData {
+
+        @JsonProperty("id")
+        private Long id;
+
+        @JsonProperty("cod")
+        private Long cod;
+
+        @JsonProperty("tax")
+        private Long tax;
+
+        @JsonProperty("cash")
+        private Long cash;
+
+        @JsonProperty("total_price_after_sub_discount")
+        private Long totalPriceAfterSubDiscount;
+
+        @JsonProperty("total_discount")
+        private Long totalDiscount;
+
+        @JsonProperty("shipping_fee")
+        private Long shippingFee;
+
+        @JsonProperty("items")
+        @Builder.Default
+        private List<FacebookItemDto> items = new ArrayList<>();
+
+        @JsonProperty("customer")
+        private FacebookCustomer customer;
+
+        @JsonProperty("inserted_at")
+        private String insertedAt;
+
+        @JsonProperty("bill_phone_number")
+        private String billPhoneNumber;
+
+        @JsonProperty("shipping_address")
+        private ShippingAddress shippingAddress;
+
+        @JsonProperty("ad_id")
+        private String adId;
+
+        @JsonProperty("status")
+        private Integer status;
+
+        @JsonProperty("status_name")
+        private String statusName;
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class ShippingAddress {
+            @JsonProperty("province_name")
+            private String provinceName;
+
+            @JsonProperty("district_name")
+            private String districtName;
+        }
     }
 }

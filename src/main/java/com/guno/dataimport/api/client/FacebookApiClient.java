@@ -25,6 +25,7 @@ import java.util.Map;
 public class FacebookApiClient {
 
     private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper; // Use injected ObjectMapper
 
     @Value("${api.facebook.base-url}")
     private String baseUrl;
@@ -42,7 +43,7 @@ public class FacebookApiClient {
     private int maxRetries;
 
     @Value("${api.facebook.default-date:}")
-    private String defaultDate; // Format: yyyy-MM-dd
+    private String defaultDate;
 
     @Value("${api.facebook.filter-date:update}")
     private String defaultFilterDate;
@@ -103,7 +104,6 @@ public class FacebookApiClient {
                 log.debug("Raw API Response: {}", response.getBody());
 
                 // Parse manually to FacebookApiResponse
-                ObjectMapper objectMapper = new ObjectMapper();
                 FacebookApiResponse apiResponse = objectMapper.readValue(response.getBody(), FacebookApiResponse.class);
 
                 if (apiResponse != null) {
@@ -153,7 +153,7 @@ public class FacebookApiClient {
         HttpHeaders headers = new HttpHeaders();
         headers.set("Content-Type", "application/json");
 
-        if (authToken != null && !authToken.isEmpty() & apiKey != null && !apiKey.isEmpty()) {
+        if (authToken != null && !authToken.isEmpty() && apiKey != null && !apiKey.isEmpty()) {
             headers.set(authToken, apiKey);
         }
 

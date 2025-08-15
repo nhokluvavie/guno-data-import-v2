@@ -3,6 +3,7 @@ package com.guno.dataimport.api.service;
 import com.guno.dataimport.api.client.FacebookApiClient;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
+import com.guno.dataimport.processor.BatchProcessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -12,7 +13,6 @@ import java.util.concurrent.Executors;
 
 /**
  * API Orchestrator - Coordinates data collection from Facebook platform
- * For multi-platform, this would handle parallel collection from all platforms
  */
 @Service
 @RequiredArgsConstructor
@@ -20,6 +20,7 @@ import java.util.concurrent.Executors;
 public class ApiOrchestrator {
 
     private final FacebookApiClient facebookApiClient;
+    private final BatchProcessor batchProcessor;
 
     private final ExecutorService executorService = Executors.newFixedThreadPool(3);
 

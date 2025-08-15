@@ -115,7 +115,7 @@ public class ValidationProcessor {
                     errors.add(createValidationError("FACEBOOK_ORDER", orderId,
                             "Item " + i + " has invalid quantity"));
                 }
-                if (item.getPrice() == null || item.getPrice() < 0) {
+                if (item.getPriceAsDouble() == null || item.getPriceAsDouble() < 0) {
                     errors.add(createValidationError("FACEBOOK_ORDER", orderId,
                             "Item " + i + " has invalid price"));
                 }

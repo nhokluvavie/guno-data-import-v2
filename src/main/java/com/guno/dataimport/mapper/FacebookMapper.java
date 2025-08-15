@@ -152,18 +152,15 @@ public class FacebookMapper {
         for (FacebookItemDto item : order.getItems()) {
             OrderItem orderItem = OrderItem.builder()
                     .orderId(order.getOrderId())
-                    .sku(item.getProductKey())
+                    .sku(item.getSku())
                     .platformProductId("FACEBOOK_" + item.getId())
                     .quantity(item.getQuantityOrDefault())
                     .unitPrice(item.getPriceAsDouble())
-
-                    // CORRECTED: Calculate total price correctly
                     .totalPrice(item.getPriceAsDouble() * item.getQuantityOrDefault())
-
-                    .itemDiscount(item.getDiscountAmount() != null ? item.getDiscountAmount().doubleValue() : 0.0)
+                    .itemDiscount(item.getTotalDiscount() != null ? item.getTotalDiscount().doubleValue() : 0.0)
                     .promotionType("") // Not available in Facebook
                     .promotionCode("") // Not available
-                    .itemStatus(item.getStatus() != null ? item.getStatus() : "ACTIVE")
+                    .itemStatus("ACTIVE") // Default
                     .itemSequence(sequence.getAndIncrement())
                     .opId(0L) // Default
                     .build();
@@ -173,7 +170,6 @@ public class FacebookMapper {
 
         return orderItems;
     }
-
     // Map Facebook items to Product entities - CORRECTED
     public List<Product> mapToProducts(FacebookOrderDto order) {
         if (order == null || order.getItems() == null || order.getItems().isEmpty()) {
@@ -184,40 +180,37 @@ public class FacebookMapper {
 
         for (FacebookItemDto item : order.getItems()) {
             Product product = Product.builder()
-                    .sku(item.getProductKey())
+                    .sku(item.getSku())
                     .platformProductId("FACEBOOK_" + item.getId())
                     .productId(item.getProductId())
-                    .variationId(item.getVariantId())
+                    .variationId(item.getVariationId())
                     .barcode(item.getBarcode())
-                    .productName(item.getName() != null ? item.getName() : item.getProductName())
+                    .productName(item.getName())
                     .productDescription("") // Not available
-                    .brand(item.getBrand())
-                    .model(item.getModel())
-                    .categoryLevel1(item.getCategory())
+                    .brand("") // Not available in variation_info
+                    .model("") // Not available
+                    .categoryLevel1("") // Not available
                     .categoryLevel2("") // Not available
                     .categoryLevel3("") // Not available
-                    .categoryPath(item.getCategory())
+                    .categoryPath("") // Not available
                     .color(item.getColor())
                     .size(item.getSize())
-                    .material(item.getMaterial())
-                    .weightGram(item.getWeightGram() != null ? item.getWeightGram() : 0)
-                    .dimensions(item.getDimensions())
-
-                    // CORRECTED: Price mapping
-                    .costPrice(item.getCostPrice() != null ? item.getCostPrice().doubleValue() : 0.0)
-                    .retailPrice(item.getRetailPrice() != null ? item.getRetailPrice().doubleValue() :
-                            item.getPriceAsDouble())
-                    .originalPrice(item.getOriginalPrice() != null ? item.getOriginalPrice().doubleValue() :
-                            (item.getPriceAsDouble() + (item.getDiscountAmount() != null ? item.getDiscountAmount().doubleValue() : 0.0)))
-
+                    .material("") // Not available
+                    .weightGram(item.getVariationInfo() != null && item.getVariationInfo().getWeight() != null ?
+                            item.getVariationInfo().getWeight() : 0)
+                    .dimensions("") // Not available
+                    .costPrice(0.0) // Not available
+                    .retailPrice(item.getPriceAsDouble())
+                    .originalPrice(item.getPriceAsDouble())
                     .priceRange(calculatePriceRange(item))
-                    .isActive(item.getIsActive() != null ? item.getIsActive() : true)
-                    .isFeatured(item.getIsFeatured() != null ? item.getIsFeatured() : false)
+                    .isActive(true) // Default
+                    .isFeatured(false) // Default
                     .isSeasonal(false) // Default
-                    .isNewArrival(item.getIsNewArrival() != null ? item.getIsNewArrival() : false)
-                    .isBestSeller(item.getIsBestSeller() != null ? item.getIsBestSeller() : false)
-                    .primaryImageUrl(item.getImageUrl() != null ? item.getImageUrl() : item.getPrimaryImageUrl())
-                    .imageCount(item.getImageCount() != null ? item.getImageCount() : 0)
+                    .isNewArrival(false) // Default
+                    .isBestSeller(false) // Default
+                    .primaryImageUrl(item.getImageUrl())
+                    .imageCount(item.getVariationInfo() != null && item.getVariationInfo().getImages() != null ?
+                            item.getVariationInfo().getImages().size() : 0)
                     .seoTitle("") // Not available
                     .seoKeywords("") // Not available
                     .build();
@@ -241,13 +234,13 @@ public class FacebookMapper {
                 .countryName("Vietnam")
                 .regionCode("") // Not available
                 .regionName("") // Not available
-                .provinceCode(order.getNewProvinceId())
+                .provinceCode("0")
                 .provinceName(order.getNewProvinceName())
                 .provinceType("") // Not available
                 .districtCode("") // Not available
                 .districtName(order.getNewDistrictName())
                 .districtType("") // Not available
-                .wardCode(order.getNewCommuneId())
+                .wardCode("")
                 .wardName("") // Not available
                 .wardType("") // Not available
                 .isUrban(determineIfUrban(order.getNewProvinceName()))
@@ -418,7 +411,7 @@ public class FacebookMapper {
     }
 
     private String generateInternalUuid(FacebookOrderDto order) {
-        return "FB_" + order.getId() + "_" + System.currentTimeMillis();
+        return "FB_" + order.getOrderId() + "_" + System.currentTimeMillis();
     }
 
     private int calculateItemQuantity(List<FacebookItemDto> items) {
@@ -429,7 +422,7 @@ public class FacebookMapper {
     private int calculateTotalWeight(List<FacebookItemDto> items) {
         if (items == null) return 0;
         return items.stream()
-                .mapToInt(item -> (item.getWeightGram() != null ? item.getWeightGram() : 0) *
+                .mapToInt(item -> (item.getVariationInfo().getWeight() != null ? item.getVariationInfo().getWeight() : 0) *
                         item.getQuantityOrDefault())
                 .sum();
     }

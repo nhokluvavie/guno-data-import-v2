@@ -62,11 +62,11 @@ class FacebookMapperTest {
         FacebookOrderDto order = response.getData().getOrders().get(0);
         log.info("Testing with order: {}", order.getOrderId());
 
-        // Test all mappings and save to DB
+        // Test all mappings and save to DB (correct order)
         testAndSaveCustomer(order);
         testAndSaveOrder(order);
-        testAndSaveOrderItems(order);
-        testAndSaveProducts(order);
+        testAndSaveProducts(order);      // Save products FIRST
+        testAndSaveOrderItems(order);    // Then save order items
         testAndSaveGeography(order);
         testAndSavePayment(order);
         testAndSaveProcessingDate(order);

@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 
 /**
  * Facebook Item DTO - Order item details from Facebook API
+ * Based on actual JSON structure from facebook_order.json
  */
 @Data
 @Builder
@@ -20,121 +21,134 @@ public class FacebookItemDto {
     @JsonProperty("id")
     private Long id;
 
-    @JsonProperty("name")
-    private String name;
-
-    @JsonProperty("product_name")
-    private String productName;
-
-    @JsonProperty("price")
-    private Long price;
+    @JsonProperty("note")
+    private String note;
 
     @JsonProperty("quantity")
     private Integer quantity;
 
-    @JsonProperty("total_price")
-    private Long totalPrice;
-
-    // Product identification
     @JsonProperty("product_id")
     private String productId;
 
-    @JsonProperty("variant_id")
-    private String variantId;
+    @JsonProperty("variation_id")
+    private String variationId;
 
-    @JsonProperty("sku")
-    private String sku;
+    @JsonProperty("note_product")
+    private String noteProduct;
 
-    @JsonProperty("barcode")
-    private String barcode;
+    @JsonProperty("total_discount")
+    private Long totalDiscount;
 
-    // Product details
-    @JsonProperty("category")
-    private String category;
-
-    @JsonProperty("brand")
-    private String brand;
-
-    @JsonProperty("model")
-    private String model;
-
-    @JsonProperty("color")
-    private String color;
-
-    @JsonProperty("size")
-    private String size;
-
-    @JsonProperty("material")
-    private String material;
-
-    @JsonProperty("weight_gram")
-    private Integer weightGram;
-
-    @JsonProperty("dimensions")
-    private String dimensions;
-
-    // Pricing
-    @JsonProperty("cost_price")
-    private Long costPrice;
-
-    @JsonProperty("retail_price")
-    private Long retailPrice;
-
-    @JsonProperty("original_price")
-    private Long originalPrice;
-
-    @JsonProperty("discount_amount")
-    private Long discountAmount;
-
-    @JsonProperty("discount_rate")
-    private Double discountRate;
-
-    // Images and media
-    @JsonProperty("image_url")
-    private String imageUrl;
-
-    @JsonProperty("primary_image_url")
-    private String primaryImageUrl;
-
-    @JsonProperty("image_count")
-    private Integer imageCount;
-
-    // Status and flags
-    @JsonProperty("status")
-    private String status;
-
-    @JsonProperty("is_active")
-    private Boolean isActive;
-
-    @JsonProperty("is_featured")
-    private Boolean isFeatured;
-
-    @JsonProperty("is_new_arrival")
-    private Boolean isNewArrival;
-
-    @JsonProperty("is_best_seller")
-    private Boolean isBestSeller;
-
-    @JsonProperty("note")
-    private String note;
-
-    @JsonProperty("sequence")
-    private Integer sequence;
+    @JsonProperty("variation_info")
+    private VariationInfo variationInfo;
 
     // Helper methods
-    public double getPriceAsDouble() {
-        return price != null ? price.doubleValue() : 0.0;
-    }
-
-    public double getTotalPriceAsDouble() {
-        return totalPrice != null ? totalPrice.doubleValue() : 0.0;
+    public String getSku() {
+        return variationInfo != null ? variationInfo.getDisplayId() : null;
     }
 
     public String getProductKey() {
-        return sku != null ? sku : (productId != null ? productId : id.toString());
+        return getSku() != null ? getSku() : (productId != null ? productId : id.toString());
+    }
+
+    public String getName() {
+        return variationInfo != null ? variationInfo.getName() : null;
+    }
+
+    public Double getPriceAsDouble() {
+        return variationInfo != null && variationInfo.getRetailPrice() != null ?
+                variationInfo.getRetailPrice().doubleValue() : 0.0;
     }
 
     public int getQuantityOrDefault() {
         return quantity != null ? quantity : 1;
+    }
+
+    public String getColor() {
+        if (variationInfo != null && variationInfo.getFields() != null) {
+            return variationInfo.getFields().stream()
+                    .filter(field -> "Màu".equals(field.getName()))
+                    .map(VariationField::getValue)
+                    .findFirst()
+                    .orElse(null);
+        }
+        return null;
+    }
+
+    public String getSize() {
+        if (variationInfo != null && variationInfo.getFields() != null) {
+            return variationInfo.getFields().stream()
+                    .filter(field -> "Sz".equals(field.getName()))
+                    .map(VariationField::getValue)
+                    .findFirst()
+                    .orElse(null);
+        }
+        return null;
+    }
+
+    public String getBarcode() {
+        return variationInfo != null ? variationInfo.getBarcode() : null;
+    }
+
+    public String getImageUrl() {
+        if (variationInfo != null && variationInfo.getImages() != null && !variationInfo.getImages().isEmpty()) {
+            return variationInfo.getImages().get(0);
+        }
+        return null;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class VariationInfo {
+
+        @JsonProperty("name")
+        private String name;
+
+        @JsonProperty("detail")
+        private String detail;
+
+        @JsonProperty("fields")
+        private java.util.List<VariationField> fields;
+
+        @JsonProperty("images")
+        private java.util.List<String> images;
+
+        @JsonProperty("weight")
+        private Integer weight;
+
+        @JsonProperty("barcode")
+        private String barcode;
+
+        @JsonProperty("display_id")
+        private String displayId;
+
+        @JsonProperty("retail_price")
+        private Long retailPrice;
+
+        @JsonProperty("product_display_id")
+        private String productDisplayId;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class VariationField {
+
+        @JsonProperty("id")
+        private String id;
+
+        @JsonProperty("name")
+        private String name;
+
+        @JsonProperty("value")
+        private String value;
+
+        @JsonProperty("keyValue")
+        private String keyValue;
     }
 }

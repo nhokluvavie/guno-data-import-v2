@@ -36,7 +36,7 @@ api:
     page-size: 1  # Smaller page size for testing
     max-retries: 3
     retry-delay-ms: 1000
-    default-date: "2025-08-12"  # Configurable date for testing
+    default-date: "2025-08-15"  # Configurable date for testing
     filter-date: "update"       # Default filter-date
 
   # Common API settings for test

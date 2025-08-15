@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Facebook Mapper - Convert Facebook DTOs to Database Entities
- * Based on actual facebook_order.json structure
+ * IMPROVED: Better null handling, more accurate mapping, simplified logic
  */
 @Component
 @Slf4j
@@ -26,452 +26,355 @@ public class FacebookMapper {
             DateTimeFormatter.ISO_LOCAL_DATE_TIME
     };
 
-    // Map Facebook order to Customer entity
+    // IMPROVED: Better null handling and simplified logic
     public Customer mapToCustomer(FacebookOrderDto order) {
-        if (order == null || order.getCustomer() == null) {
-            return null;
-        }
+        if (order == null || order.getCustomer() == null) return null;
 
-        FacebookCustomer fbCustomer = order.getCustomer();
-
+        FacebookCustomer customer = order.getCustomer();
         return Customer.builder()
-                .customerId(fbCustomer.getId())
-                .customerKey(generateCustomerKey(fbCustomer.getId()))
-                .platformCustomerId(fbCustomer.getId())
-                .phoneHash(hashPhone(fbCustomer.getPrimaryPhone()))
-                .emailHash(hashEmail(fbCustomer.getPrimaryEmail()))
-                .gender(normalizeGender(fbCustomer.getGender()))
+                .customerId(customer.getId())
+                .customerKey(generateKey(customer.getId()))
+                .platformCustomerId(customer.getId())
+                .phoneHash(hashValue(customer.getPrimaryPhone()))
+                .emailHash(hashValue(customer.getPrimaryEmail()))
+                .gender(normalizeGender(customer.getGender()))
                 .customerSegment("FACEBOOK")
                 .customerTier("STANDARD")
                 .acquisitionChannel("FACEBOOK")
-                .firstOrderDate(parseDateTime(fbCustomer.getInsertedAt()))
-                .lastOrderDate(parseDateTime(fbCustomer.getLastOrderAt()))
-                .totalOrders(fbCustomer.getOrderCount() != null ? fbCustomer.getOrderCount() : 0)
-                .totalSpent(fbCustomer.getPurchasedAmountAsDouble())
-                .averageOrderValue(calculateAOV(fbCustomer))
-                .totalItemsPurchased(0) // Will be calculated later
-                .daysSinceFirstOrder(calculateDaysSinceFirst(fbCustomer.getInsertedAt()))
-                .daysSinceLastOrder(calculateDaysSinceLast(fbCustomer.getLastOrderAt()))
-                .purchaseFrequencyDays(0.0) // Will be calculated
-                .returnRate(calculateReturnRate(fbCustomer))
-                .cancellationRate(0.0) // Default
-                .codPreferenceRate(0.0) // Will be calculated
-                .favoriteCategory("") // Not available in Facebook
-                .favoriteBrand("") // Not available
-                .preferredPaymentMethod("") // Will be determined from orders
+                .firstOrderDate(parseDateTime(customer.getInsertedAt()))
+                .lastOrderDate(parseDateTime(customer.getLastOrderAt()))
+                .totalOrders(safeInt(customer.getOrderCount()))
+                .totalSpent(customer.getPurchasedAmountAsDouble())
+                .averageOrderValue(calculateAOV(customer))
+                .daysSinceFirstOrder(calculateDaysSince(customer.getInsertedAt()))
+                .daysSinceLastOrder(calculateDaysSince(customer.getLastOrderAt()))
+                .returnRate(calculateReturnRate(customer))
                 .preferredPlatform("FACEBOOK")
-                .primaryShippingProvince(extractPrimaryProvince(order))
-                .shipsToMultipleProvinces(false) // Default
-                .loyaltyPoints(fbCustomer.getRewardPoint() != null ? fbCustomer.getRewardPoint() : 0)
-                .referralCount(fbCustomer.getCountReferrals() != null ? fbCustomer.getCountReferrals() : 0)
-                .isReferrer(fbCustomer.getIsReferrer() != null ? fbCustomer.getIsReferrer() : false)
+                .primaryShippingProvince(getProvinceName(order))
+                .loyaltyPoints(safeInt(customer.getRewardPoint()))
+                .referralCount(safeInt(customer.getCountReferrals()))
+                .isReferrer(safeBool(customer.getIsReferrer()))
                 .build();
     }
 
-    // Map Facebook order to Order entity - CORRECTED MAPPING
+    // IMPROVED: More accurate financial calculations
     public Order mapToOrder(FacebookOrderDto order) {
-        if (order == null) {
-            return null;
-        }
+        if (order == null) return null;
+
+        double totalAmount = order.getTotalAmountAsDouble();
+        double discount = safeDouble(order.getDiscount());
+        double grossRevenue = totalAmount + discount; // Before discount
 
         return Order.builder()
                 .orderId(order.getOrderId())
                 .customerId(order.getCustomer() != null ? order.getCustomer().getId() : null)
                 .shopId("FACEBOOK_SHOP")
-                .internalUuid(generateInternalUuid(order))
-                .orderCount(1)
-                .itemQuantity(calculateItemQuantity(order.getItems()))
-                .totalItemsInOrder(order.getItems() != null ? order.getItems().size() : 0)
-
-                // CORRECTED: Gross Revenue = Total BEFORE discount
-                .grossRevenue(calculateGrossRevenue(order))
-                // CORRECTED: Net Revenue = Total AFTER discount
-                .netRevenue(order.getTotalAmountAsDouble()) // total_price_after_sub_discount
-
-                .shippingFee(order.getShippingFee() != null ? order.getShippingFee().doubleValue() : 0.0)
-                .taxAmount(order.getTax() != null ? order.getTax().doubleValue() : 0.0)
-                .discountAmount(order.getDiscount() != null ? order.getDiscount().doubleValue() : 0.0)
-
-                // CORRECTED: COD amount only if COD order
-                .codAmount(order.isCodOrder() ? order.getTotalAmountAsDouble() : 0.0)
-
-                .platformFee(0.0) // Not provided by Facebook
-                .sellerDiscount(0.0) // Default
-                .platformDiscount(order.getDiscount() != null ? order.getDiscount().doubleValue() : 0.0)
-
-                // CORRECTED: Original price = gross revenue (before discount)
-                .originalPrice(calculateGrossRevenue(order))
-
-                .estimatedShippingFee(order.getShippingFee() != null ? order.getShippingFee().doubleValue() : 0.0)
-                .actualShippingFee(order.getShippingFee() != null ? order.getShippingFee().doubleValue() : 0.0)
+                .internalUuid("FB_" + order.getOrderId())
+                .itemQuantity(calculateTotalQuantity(order.getItems()))
+                .totalItemsInOrder(safeSize(order.getItems()))
+                .grossRevenue(grossRevenue)
+                .netRevenue(totalAmount)
+                .shippingFee(safeDouble(order.getShippingFee()))
+                .taxAmount(safeDouble(order.getTax()))
+                .discountAmount(discount)
+                .codAmount(order.isCodOrder() ? totalAmount : 0.0)
+                .platformDiscount(discount)
+                .originalPrice(grossRevenue)
+                .estimatedShippingFee(safeDouble(order.getShippingFee()))
+                .actualShippingFee(safeDouble(order.getShippingFee()))
                 .shippingWeightGram(calculateTotalWeight(order.getItems()))
-                .daysToShip(1) // Default for Facebook
-                .isDelivered(isOrderDelivered(order.getStatus()))
-                .isCancelled(isOrderCancelled(order.getStatus()))
-                .isReturned(false) // Default
+                .isDelivered(isStatus(order.getStatus(), 4)) // Delivered
+                .isCancelled(isStatus(order.getStatus(), -1)) // Cancelled
                 .isCod(order.isCodOrder())
                 .isNewCustomer(isNewCustomer(order.getCustomer()))
                 .isRepeatCustomer(!isNewCustomer(order.getCustomer()))
-                .isBulkOrder(false) // Default
-                .isPromotionalOrder(order.getDiscount() != null && order.getDiscount() > 0)
-                .isSameDayDelivery(false) // Default
-                .orderToShipHours(24) // Default
-                .shipToDeliveryHours(72) // Default
-                .totalFulfillmentHours(96) // Default
-                .customerOrderSequence(1) // Will be calculated
-                .customerLifetimeOrders(order.getCustomer() != null ?
-                        (order.getCustomer().getOrderCount() != null ? order.getCustomer().getOrderCount() : 1) : 1)
-                .customerLifetimeValue(order.getCustomer() != null ?
-                        order.getCustomer().getPurchasedAmountAsDouble() : 0.0)
-                .daysSinceLastOrder(0) // Will be calculated
-                .promotionImpact(order.getDiscount() != null ? order.getDiscount().doubleValue() : 0.0)
-
-                // CORRECTED: Ad revenue tracking
-                .adRevenue(order.getAdId() != null && !order.getAdId().isEmpty() ?
-                        order.getTotalAmountAsDouble() : 0.0)
-                .organicRevenue(order.getAdId() == null || order.getAdId().isEmpty() ?
-                        order.getTotalAmountAsDouble() : 0.0)
-
-                .aov(order.getTotalAmountAsDouble())
-                .shippingCostRatio(calculateShippingCostRatio(order))
+                .isPromotionalOrder(discount > 0)
+                .customerLifetimeOrders(order.getCustomer() != null ? safeInt(order.getCustomer().getOrderCount()) : 0)
+                .customerLifetimeValue(order.getCustomer() != null ? order.getCustomer().getPurchasedAmountAsDouble() : 0.0)
+                .adRevenue(hasAd(order.getAdId()) ? totalAmount : 0.0)
+                .organicRevenue(hasAd(order.getAdId()) ? 0.0 : totalAmount)
+                .aov(totalAmount)
+                .shippingCostRatio(calculateRatio(safeDouble(order.getShippingFee()), totalAmount))
                 .createdAt(parseDateTime(order.getCreatedAt()))
-                .rawData(0) // Default
-                .platformSpecificData(0) // Default
                 .build();
     }
 
-    // Map Facebook items to OrderItem entities - CORRECTED
+    // IMPROVED: Simplified with better null handling
     public List<OrderItem> mapToOrderItems(FacebookOrderDto order) {
-        if (order == null || order.getItems() == null || order.getItems().isEmpty()) {
-            return new ArrayList<>();
-        }
+        if (order == null || order.getItems() == null) return new ArrayList<>();
 
-        List<OrderItem> orderItems = new ArrayList<>();
+        List<OrderItem> items = new ArrayList<>();
         AtomicInteger sequence = new AtomicInteger(1);
 
         for (FacebookItemDto item : order.getItems()) {
-            OrderItem orderItem = OrderItem.builder()
+            int qty = safeInt(item.getQuantity(), 1);
+            double price = item.getPriceAsDouble();
+
+            items.add(OrderItem.builder()
                     .orderId(order.getOrderId())
-                    .sku(item.getSku())
-                    .platformProductId("FACEBOOK_" + item.getId())
-                    .quantity(item.getQuantityOrDefault())
-                    .unitPrice(item.getPriceAsDouble())
-                    .totalPrice(item.getPriceAsDouble() * item.getQuantityOrDefault())
-                    .itemDiscount(item.getTotalDiscount() != null ? item.getTotalDiscount().doubleValue() : 0.0)
-                    .promotionType("") // Not available in Facebook
-                    .promotionCode("") // Not available
-                    .itemStatus("ACTIVE") // Default
+                    .sku(getSku(item))
+                    .platformProductId("FB_" + item.getId())
+                    .quantity(qty)
+                    .unitPrice(price)
+                    .totalPrice(price * qty)
+                    .itemDiscount(safeDouble(item.getTotalDiscount()))
                     .itemSequence(sequence.getAndIncrement())
-                    .opId(0L) // Default
-                    .build();
-
-            orderItems.add(orderItem);
+                    .build());
         }
-
-        return orderItems;
+        return items;
     }
-    // Map Facebook items to Product entities - CORRECTED
+
+    // IMPROVED: Better product mapping
     public List<Product> mapToProducts(FacebookOrderDto order) {
-        if (order == null || order.getItems() == null || order.getItems().isEmpty()) {
-            return new ArrayList<>();
-        }
+        if (order == null || order.getItems() == null) return new ArrayList<>();
 
         List<Product> products = new ArrayList<>();
-
         for (FacebookItemDto item : order.getItems()) {
-            Product product = Product.builder()
-                    .sku(item.getSku())
-                    .platformProductId("FACEBOOK_" + item.getId())
+            products.add(Product.builder()
+                    .sku(getSku(item))
+                    .platformProductId("FB_" + item.getId())
                     .productId(item.getProductId())
                     .variationId(item.getVariationId())
-                    .barcode(item.getBarcode())
-                    .productName(item.getName())
-                    .productDescription("") // Not available
-                    .brand("") // Not available in variation_info
-                    .model("") // Not available
-                    .categoryLevel1("") // Not available
-                    .categoryLevel2("") // Not available
-                    .categoryLevel3("") // Not available
-                    .categoryPath("") // Not available
-                    .color(item.getColor())
-                    .size(item.getSize())
-                    .material("") // Not available
-                    .weightGram(item.getVariationInfo() != null && item.getVariationInfo().getWeight() != null ?
-                            item.getVariationInfo().getWeight() : 0)
-                    .dimensions("") // Not available
-                    .costPrice(0.0) // Not available
+                    .barcode(getBarcode(item))
+                    .productName(getName(item))
+                    .color(getFieldValue(item, "Màu"))
+                    .size(getFieldValue(item, "Sz"))
+                    .weightGram(getWeight(item))
                     .retailPrice(item.getPriceAsDouble())
                     .originalPrice(item.getPriceAsDouble())
-                    .priceRange(calculatePriceRange(item))
-                    .isActive(true) // Default
-                    .isFeatured(false) // Default
-                    .isSeasonal(false) // Default
-                    .isNewArrival(false) // Default
-                    .isBestSeller(false) // Default
-                    .primaryImageUrl(item.getImageUrl())
-                    .imageCount(item.getVariationInfo() != null && item.getVariationInfo().getImages() != null ?
-                            item.getVariationInfo().getImages().size() : 0)
-                    .seoTitle("") // Not available
-                    .seoKeywords("") // Not available
-                    .build();
-
-            products.add(product);
+                    .priceRange(getPriceRange(item.getPriceAsDouble()))
+                    .primaryImageUrl(getImageUrl(item))
+                    .imageCount(getImageCount(item))
+                    .build());
         }
-
         return products;
     }
 
-    // Map Facebook order to GeographyInfo entity - CORRECTED
+    // IMPROVED: Simplified geography mapping
     public GeographyInfo mapToGeographyInfo(FacebookOrderDto order) {
-        if (order == null) {
-            return null;
-        }
+        if (order == null) return null;
 
+        String province = getProvinceName(order);
         return GeographyInfo.builder()
                 .orderId(order.getOrderId())
-                .geographyKey(generateGeographyKey(order.getOrderId()))
-                .countryCode("VN") // Default Vietnam
+                .geographyKey(generateKey(order.getOrderId()))
+                .countryCode("VN")
                 .countryName("Vietnam")
-                .regionCode("") // Not available
-                .regionName("") // Not available
-                .provinceCode("0")
-                .provinceName(order.getNewProvinceName())
-                .provinceType("") // Not available
-                .districtCode("") // Not available
-                .districtName(order.getNewDistrictName())
-                .districtType("") // Not available
-                .wardCode("")
-                .wardName("") // Not available
-                .wardType("") // Not available
-                .isUrban(determineIfUrban(order.getNewProvinceName()))
-                .isMetropolitan(determineIfMetropolitan(order.getNewProvinceName()))
-                .isCoastal(false) // Default
-                .isBorder(false) // Default
-                .economicTier(determineEconomicTier(order.getNewProvinceName()))
-                .populationDensity("") // Not available
-                .incomeLevel("") // Not available
-                .shippingZone(determineShippingZone(order.getNewProvinceName()))
-                .deliveryComplexity("NORMAL") // Default
-                .standardDeliveryDays(determineDeliveryDays(order.getNewProvinceName()))
-                .expressDeliveryAvailable(true) // Default
-                .latitude(0.0) // Not available
-                .longitude(0.0) // Not available
+                .provinceName(province)
+                .districtName(getDistrictName(order))
+                .isUrban(isUrbanProvince(province))
+                .isMetropolitan(isMetroProvince(province))
+                .economicTier(getEconomicTier(province))
+                .shippingZone(getShippingZone(province))
+                .standardDeliveryDays(getDeliveryDays(province))
+                .expressDeliveryAvailable(true)
                 .build();
     }
 
-    // Map Facebook order to PaymentInfo entity - CORRECTED
+    // IMPROVED: Simplified payment mapping
     public PaymentInfo mapToPaymentInfo(FacebookOrderDto order) {
-        if (order == null) {
-            return null;
-        }
+        if (order == null) return null;
 
+        boolean isCod = order.isCodOrder();
         return PaymentInfo.builder()
                 .orderId(order.getOrderId())
-                .paymentKey(generatePaymentKey(order.getOrderId()))
-                .paymentMethod(determinePaymentMethod(order))
-                .paymentCategory(order.isCodOrder() ? "CASH_ON_DELIVERY" : "ONLINE_PAYMENT")
+                .paymentKey(generateKey("PAY_" + order.getOrderId()))
+                .paymentMethod(isCod ? "COD" : "ONLINE")
+                .paymentCategory(isCod ? "CASH_ON_DELIVERY" : "DIGITAL_PAYMENT")
                 .paymentProvider("FACEBOOK_PAY")
-                .isCod(order.isCodOrder())
-                .isPrepaid(!order.isCodOrder())
-                .isInstallment(false) // Default
-                .installmentMonths(0)
-                .supportsRefund(true) // Default
-                .supportsPartialRefund(true) // Default
-                .refundProcessingDays(7) // Default
-                .riskLevel("LOW") // Default
-                .requiresVerification(false) // Default
-                .fraudScore(0.0) // Default
-                .transactionFeeRate(0.0) // Default
-                .processingFee(0.0) // Default
-                .paymentProcessingTimeMinutes(5) // Default
-                .settlementDays(1) // Default
+                .isCod(isCod)
+                .isPrepaid(!isCod)
+                .supportsRefund(true)
+                .supportsPartialRefund(true)
+                .refundProcessingDays(7)
+                .riskLevel("LOW")
+                .settlementDays(1)
                 .build();
     }
 
-    // CORRECTED Helper methods
-    private double calculateGrossRevenue(FacebookOrderDto order) {
-        // Gross Revenue = Net Revenue + Discount
-        double netRevenue = order.getTotalAmountAsDouble(); // total_price_after_sub_discount
-        double discount = order.getDiscount() != null ? order.getDiscount().doubleValue() : 0.0;
-        return netRevenue + discount;
-    }
-
-    private String determinePaymentMethod(FacebookOrderDto order) {
-        if (order.isCodOrder()) {
-            return "COD";
+    // IMPROVED: Consolidated helper methods with better null/empty handling
+    private String getSku(FacebookItemDto item) {
+        if (item.getVariationInfo() != null) {
+            String displayId = item.getVariationInfo().getDisplayId();
+            if (displayId != null && !displayId.trim().isEmpty()) {
+                return displayId.trim();
+            }
         }
-        if (order.getCash() != null && order.getCash() > 0) {
-            return "CASH";
+        return "SKU_" + item.getId();
+    }
+
+    private String getBarcode(FacebookItemDto item) {
+        if (item.getVariationInfo() != null) {
+            String barcode = item.getVariationInfo().getBarcode();
+            return (barcode != null && !barcode.trim().isEmpty()) ? barcode.trim() : null;
         }
-        return "ONLINE_PAYMENT";
+        return null;
     }
 
-    private boolean determineIfUrban(String provinceName) {
-        if (provinceName == null) return false;
-        String province = provinceName.toLowerCase();
-        return province.contains("hà nội") || province.contains("hồ chí minh") ||
-                province.contains("đà nẵng") || province.contains("cần thơ");
-    }
-
-    private boolean determineIfMetropolitan(String provinceName) {
-        if (provinceName == null) return false;
-        String province = provinceName.toLowerCase();
-        return province.contains("hà nội") || province.contains("hồ chí minh");
-    }
-
-    private String determineEconomicTier(String provinceName) {
-        if (provinceName == null) return "TIER_3";
-        String province = provinceName.toLowerCase();
-        if (province.contains("hà nội") || province.contains("hồ chí minh")) {
-            return "TIER_1";
+    private String getName(FacebookItemDto item) {
+        if (item.getVariationInfo() != null) {
+            String name = item.getVariationInfo().getName();
+            if (name != null && !name.trim().isEmpty()) {
+                return name.trim();
+            }
         }
-        if (province.contains("đà nẵng") || province.contains("cần thơ") ||
-                province.contains("hải phòng")) {
-            return "TIER_2";
-        }
-        return "TIER_3";
+        return "Product " + item.getId();
     }
 
-    private String determineShippingZone(String provinceName) {
-        if (provinceName == null) return "ZONE_3";
-        String province = provinceName.toLowerCase();
-        if (province.contains("hà nội") || province.contains("hồ chí minh")) {
-            return "ZONE_1";
-        }
-        if (province.contains("đà nẵng") || province.contains("cần thơ")) {
-            return "ZONE_2";
-        }
-        return "ZONE_3";
+    private String getFieldValue(FacebookItemDto item, String fieldName) {
+        if (item.getVariationInfo() == null || item.getVariationInfo().getFields() == null) return null;
+        return item.getVariationInfo().getFields().stream()
+                .filter(f -> fieldName.equals(f.getName()))
+                .map(FacebookItemDto.VariationField::getValue)
+                .findFirst().orElse(null);
     }
 
-    private int determineDeliveryDays(String provinceName) {
-        if (provinceName == null) return 5;
-        String province = provinceName.toLowerCase();
-        if (province.contains("hà nội") || province.contains("hồ chí minh")) {
-            return 1; // Same day or next day
-        }
-        if (province.contains("đà nẵng") || province.contains("cần thơ")) {
-            return 2;
-        }
-        return 3; // Standard delivery
+    private int getWeight(FacebookItemDto item) {
+        return item.getVariationInfo() != null && item.getVariationInfo().getWeight() != null ?
+                item.getVariationInfo().getWeight() : 0;
     }
 
-    // Keep existing helper methods unchanged
-    private Long generateCustomerKey(String customerId) {
-        return Math.abs(customerId.hashCode()) % 1000000000L;
+    private String getImageUrl(FacebookItemDto item) {
+        if (item.getVariationInfo() == null || item.getVariationInfo().getImages() == null) return null;
+        List<String> images = item.getVariationInfo().getImages();
+        return !images.isEmpty() ? images.get(0) : null;
     }
 
-    private String hashPhone(String phone) {
-        return phone != null ? "HASH_" + Math.abs(phone.hashCode()) : null;
+    private int getImageCount(FacebookItemDto item) {
+        if (item.getVariationInfo() == null || item.getVariationInfo().getImages() == null) return 0;
+        return item.getVariationInfo().getImages().size();
     }
 
-    private String hashEmail(String email) {
-        return email != null ? "HASH_" + Math.abs(email.hashCode()) : null;
+    private String getProvinceName(FacebookOrderDto order) {
+        return order.getData() != null && order.getData().getShippingAddress() != null ?
+                order.getData().getShippingAddress().getProvinceName() : null;
+    }
+
+    private String getDistrictName(FacebookOrderDto order) {
+        return order.getData() != null && order.getData().getShippingAddress() != null ?
+                order.getData().getShippingAddress().getDistrictName() : null;
+    }
+
+    // Utility methods - IMPROVED: More concise
+    private Long generateKey(String input) {
+        return input != null ? Math.abs(input.hashCode()) % 1000000000L : 0L;
+    }
+
+    private String hashValue(String value) {
+        return value != null ? "HASH_" + Math.abs(value.hashCode()) : null;
     }
 
     private String normalizeGender(String gender) {
         if (gender == null) return "unknown";
-        return gender.toLowerCase().equals("male") || gender.toLowerCase().equals("female") ?
-                gender.toLowerCase() : "unknown";
+        String lower = gender.toLowerCase();
+        return (lower.equals("male") || lower.equals("female")) ? lower : "unknown";
     }
 
-    private double calculateAOV(FacebookCustomer customer) {
-        if (customer.getOrderCount() != null && customer.getOrderCount() > 0) {
-            return customer.getPurchasedAmountAsDouble() / customer.getOrderCount();
-        }
-        return 0.0;
+    private int safeInt(Integer value) {
+        return value != null ? value : 0;
     }
 
-    private int calculateDaysSinceFirst(String insertedAt) {
-        LocalDateTime firstDate = parseDateTime(insertedAt);
-        if (firstDate != null) {
-            return (int) java.time.Duration.between(firstDate, LocalDateTime.now()).toDays();
-        }
-        return 0;
+    private int safeInt(Integer value, int defaultValue) {
+        return value != null ? value : defaultValue;
     }
 
-    private int calculateDaysSinceLast(String lastOrderAt) {
-        LocalDateTime lastDate = parseDateTime(lastOrderAt);
-        if (lastDate != null) {
-            return (int) java.time.Duration.between(lastDate, LocalDateTime.now()).toDays();
-        }
-        return 0;
+    private double safeDouble(Long value) {
+        return value != null ? value.doubleValue() : 0.0;
     }
 
-    private double calculateReturnRate(FacebookCustomer customer) {
-        if (customer.getOrderCount() != null && customer.getOrderCount() > 0 &&
-                customer.getReturnedOrderCount() != null) {
-            return (double) customer.getReturnedOrderCount() / customer.getOrderCount() * 100;
-        }
-        return 0.0;
+    private boolean safeBool(Boolean value) {
+        return value != null ? value : false;
     }
 
-    private String extractPrimaryProvince(FacebookOrderDto order) {
-        return order.getNewProvinceName() != null ? order.getNewProvinceName() : "";
+    private int safeSize(List<?> list) {
+        return list != null ? list.size() : 0;
     }
 
-    private String generateInternalUuid(FacebookOrderDto order) {
-        return "FB_" + order.getOrderId() + "_" + System.currentTimeMillis();
+    private boolean isStatus(Integer status, int target) {
+        return status != null && status == target;
     }
 
-    private int calculateItemQuantity(List<FacebookItemDto> items) {
-        if (items == null) return 0;
-        return items.stream().mapToInt(item -> item.getQuantityOrDefault()).sum();
-    }
-
-    private int calculateTotalWeight(List<FacebookItemDto> items) {
-        if (items == null) return 0;
-        return items.stream()
-                .mapToInt(item -> (item.getVariationInfo().getWeight() != null ? item.getVariationInfo().getWeight() : 0) *
-                        item.getQuantityOrDefault())
-                .sum();
-    }
-
-    private boolean isOrderDelivered(Integer status) {
-        return status != null && status == 4; // Assuming 4 = delivered
-    }
-
-    private boolean isOrderCancelled(Integer status) {
-        return status != null && status == -1; // Assuming -1 = cancelled
+    private boolean hasAd(String adId) {
+        return adId != null && !adId.trim().isEmpty();
     }
 
     private boolean isNewCustomer(FacebookCustomer customer) {
-        return customer != null && customer.getOrderCount() != null && customer.getOrderCount() <= 1;
+        return customer == null || safeInt(customer.getOrderCount()) <= 1;
     }
 
-    private double calculateShippingCostRatio(FacebookOrderDto order) {
-        double total = order.getTotalAmountAsDouble();
-        double shipping = order.getShippingFee() != null ? order.getShippingFee().doubleValue() : 0.0;
-        return total > 0 ? (shipping / total) * 100 : 0.0;
+    private double calculateAOV(FacebookCustomer customer) {
+        int orders = safeInt(customer.getOrderCount());
+        return orders > 0 ? customer.getPurchasedAmountAsDouble() / orders : 0.0;
     }
 
-    private String calculatePriceRange(FacebookItemDto item) {
-        double price = item.getPriceAsDouble();
+    private double calculateReturnRate(FacebookCustomer customer) {
+        int total = safeInt(customer.getOrderCount());
+        int returned = safeInt(customer.getReturnedOrderCount());
+        return total > 0 ? (double) returned / total * 100 : 0.0;
+    }
+
+    private int calculateDaysSince(String dateStr) {
+        LocalDateTime date = parseDateTime(dateStr);
+        return date != null ? (int) java.time.Duration.between(date, LocalDateTime.now()).toDays() : 0;
+    }
+
+    private int calculateTotalQuantity(List<FacebookItemDto> items) {
+        return items != null ? items.stream().mapToInt(item -> safeInt(item.getQuantity(), 1)).sum() : 0;
+    }
+
+    private int calculateTotalWeight(List<FacebookItemDto> items) {
+        return items != null ? items.stream().mapToInt(item ->
+                getWeight(item) * safeInt(item.getQuantity(), 1)).sum() : 0;
+    }
+
+    private double calculateRatio(double part, double total) {
+        return total > 0 ? (part / total) * 100 : 0.0;
+    }
+
+    private boolean isUrbanProvince(String province) {
+        if (province == null) return false;
+        String p = province.toLowerCase();
+        return p.contains("hà nội") || p.contains("hồ chí minh") || p.contains("đà nẵng");
+    }
+
+    private boolean isMetroProvince(String province) {
+        if (province == null) return false;
+        String p = province.toLowerCase();
+        return p.contains("hà nội") || p.contains("hồ chí minh");
+    }
+
+    private String getEconomicTier(String province) {
+        if (province == null) return "TIER_3";
+        String p = province.toLowerCase();
+        if (p.contains("hà nội") || p.contains("hồ chí minh")) return "TIER_1";
+        if (p.contains("đà nẵng") || p.contains("cần thơ")) return "TIER_2";
+        return "TIER_3";
+    }
+
+    private String getShippingZone(String province) {
+        return "ZONE_" + (isMetroProvince(province) ? "1" : isUrbanProvince(province) ? "2" : "3");
+    }
+
+    private int getDeliveryDays(String province) {
+        if (isMetroProvince(province)) return 1;
+        if (isUrbanProvince(province)) return 2;
+        return 3;
+    }
+
+    private String getPriceRange(double price) {
         if (price < 100000) return "UNDER_100K";
         if (price < 500000) return "100K_500K";
         if (price < 1000000) return "500K_1M";
         return "OVER_1M";
     }
 
-    private Long generateGeographyKey(String orderId) {
-        return Math.abs(orderId.hashCode()) % 1000000000L;
-    }
-
-    private Long generatePaymentKey(String orderId) {
-        return Math.abs(("PAY_" + orderId).hashCode()) % 1000000000L;
-    }
-
     private LocalDateTime parseDateTime(String dateTime) {
-        if (dateTime == null || dateTime.trim().isEmpty()) {
-            return null;
-        }
+        if (dateTime == null || dateTime.trim().isEmpty()) return null;
 
         for (DateTimeFormatter formatter : DATE_FORMATTERS) {
             try {
                 return LocalDateTime.parse(dateTime.trim(), formatter);
-            } catch (DateTimeParseException ignored) {
-                // Try next formatter
-            }
+            } catch (DateTimeParseException ignored) {}
         }
 
         log.warn("Unable to parse datetime: {}", dateTime);

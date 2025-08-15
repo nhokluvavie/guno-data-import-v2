@@ -91,7 +91,7 @@ public class FacebookCustomer {
     private List<String> orderSources = new ArrayList<>();
 
     @JsonProperty("conversation_tags")
-    private String conversationTags;
+    private Object conversationTags;
 
     // Addresses
     @JsonProperty("shop_customer_addresses")

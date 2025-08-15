@@ -117,7 +117,7 @@ public class FacebookOrderDto {
     public static class FacebookOrderData {
 
         @JsonProperty("id")
-        private Long id;
+        private String id;
 
         @JsonProperty("cod")
         private Long cod;

@@ -1,17 +1,24 @@
 package com.guno.dataimport.repository;
 
 import com.guno.dataimport.entity.Status;
+import com.guno.dataimport.util.CsvFormatter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.postgresql.copy.CopyManager;
+import org.postgresql.core.BaseConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+
+import java.io.IOException;
+import java.io.StringReader;
+import java.sql.Connection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Status Repository - JDBC operations for Status entity (Master table)
+ * Status Repository - JDBC operations with COPY FROM optimization (Master table)
  */
 @Repository
 @RequiredArgsConstructor
@@ -32,77 +39,97 @@ public class StatusRepository {
             status_category = EXCLUDED.status_category
         """;
 
-    // Bulk upsert status records
+    private static final String COPY_SQL = """
+        COPY tbl_status (
+            status_key, platform, platform_status_code, platform_status_name,
+            standard_status_code, standard_status_name, status_category
+        ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
+        """;
+
+    /**
+     * OPTIMIZED: Bulk upsert with COPY FROM fallback
+     */
     public int bulkUpsert(List<Status> statuses) {
-        if (statuses == null || statuses.isEmpty()) {
-            return 0;
+        if (statuses == null || statuses.isEmpty()) return 0;
+
+        try {
+            return bulkInsertWithCopy(statuses);
+        } catch (Exception e) {
+            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            return executeBatchUpsert(statuses);
         }
-
-        log.info("Bulk upserting {} status records", statuses.size());
-
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, statuses.stream()
-                .map(this::mapStatusToParams)
-                .toList()
-        ).length;
     }
 
-    // Find status by keys
     public Map<Long, Status> findByKeys(Set<Long> statusKeys) {
-        if (statusKeys == null || statusKeys.isEmpty()) {
-            return Map.of();
-        }
+        if (statusKeys == null || statusKeys.isEmpty()) return Map.of();
 
         String sql = "SELECT * FROM tbl_status WHERE status_key = ANY(?)";
-        List<Status> statuses = jdbcTemplate.query(sql, statusRowMapper(),
-                statusKeys.toArray(new Long[0]));
-
-        return statuses.stream()
-                .collect(java.util.stream.Collectors.toMap(
-                        Status::getStatusKey,
-                        status -> status
-                ));
+        return jdbcTemplate.query(sql, statusRowMapper(), statusKeys.toArray(new Long[0]))
+                .stream().collect(java.util.stream.Collectors.toMap(
+                        Status::getStatusKey, status -> status));
     }
 
-    // Find by platform and status code
     public Status findByPlatformAndCode(String platform, String platformStatusCode) {
         String sql = "SELECT * FROM tbl_status WHERE platform = ? AND platform_status_code = ?";
         List<Status> results = jdbcTemplate.query(sql, statusRowMapper(), platform, platformStatusCode);
         return results.isEmpty() ? null : results.get(0);
     }
 
-    // Find all statuses by platform
     public List<Status> findByPlatform(String platform) {
         String sql = "SELECT * FROM tbl_status WHERE platform = ? ORDER BY status_key";
         return jdbcTemplate.query(sql, statusRowMapper(), platform);
     }
 
-    // Check if status exists
     public boolean exists(Long statusKey) {
-        String sql = "SELECT 1 FROM tbl_status WHERE status_key = ?";
-        return !jdbcTemplate.queryForList(sql, statusKey).isEmpty();
+        return !jdbcTemplate.queryForList("SELECT 1 FROM tbl_status WHERE status_key = ?", statusKey).isEmpty();
     }
 
-    // Get total count
     public long count() {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tbl_status", Long.class);
     }
 
-    // Get next status key (for auto-generation)
     public Long getNextStatusKey() {
         String sql = "SELECT COALESCE(MAX(status_key), 0) + 1 FROM tbl_status";
         return jdbcTemplate.queryForObject(sql, Long.class);
     }
 
-    // Helper methods
-    private Object[] mapStatusToParams(Status status) {
+    // === COPY FROM Implementation ===
+
+    private int bulkInsertWithCopy(List<Status> statuses) throws Exception {
+        log.info("Bulk inserting {} status records using COPY FROM", statuses.size());
+
+        String csvData = generateCsvData(statuses);
+        return jdbcTemplate.execute((Connection conn) -> {
+            CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+            try (StringReader reader = new StringReader(csvData)) {
+                return (int) copyManager.copyIn(COPY_SQL, reader);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    private String generateCsvData(List<Status> statuses) {
+        return statuses.stream()
+                .map(status -> CsvFormatter.joinCsvRow(
+                        status.getStatusKey(), status.getPlatform(), status.getPlatformStatusCode(),
+                        status.getPlatformStatusName(), status.getStandardStatusCode(),
+                        status.getStandardStatusName(), status.getStatusCategory()
+                ))
+                .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private int executeBatchUpsert(List<Status> statuses) {
+        log.info("Batch upserting {} status records", statuses.size());
+        return jdbcTemplate.batchUpdate(UPSERT_SQL, statuses.stream()
+                .map(this::mapToParams).toList()).length;
+    }
+
+    private Object[] mapToParams(Status s) {
         return new Object[]{
-                status.getStatusKey(),
-                status.getPlatform(),
-                status.getPlatformStatusCode(),
-                status.getPlatformStatusName(),
-                status.getStandardStatusCode(),
-                status.getStandardStatusName(),
-                status.getStatusCategory()
+                s.getStatusKey(), s.getPlatform(), s.getPlatformStatusCode(),
+                s.getPlatformStatusName(), s.getStandardStatusCode(),
+                s.getStandardStatusName(), s.getStatusCategory()
         };
     }
 

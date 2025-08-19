@@ -1,16 +1,23 @@
 package com.guno.dataimport.repository;
 
 import com.guno.dataimport.entity.GeographyInfo;
+import com.guno.dataimport.util.CsvFormatter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.postgresql.copy.CopyManager;
+import org.postgresql.core.BaseConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+
+import java.io.IOException;
+import java.io.StringReader;
+import java.sql.Connection;
 import java.util.List;
 import java.util.Set;
 
 /**
- * Geography Repository - JDBC operations for GeographyInfo entity
+ * Geography Repository - JDBC operations with COPY FROM optimization
  */
 @Repository
 @RequiredArgsConstructor
@@ -38,84 +45,103 @@ public class GeographyRepository {
             express_delivery_available = EXCLUDED.express_delivery_available
         """;
 
-    // Bulk upsert geography info
+    private static final String COPY_SQL = """
+        COPY tbl_geography_info (
+            order_id, geography_key, country_code, country_name, region_code, region_name,
+            province_code, province_name, province_type, district_code, district_name,
+            district_type, ward_code, ward_name, ward_type, is_urban, is_metropolitan,
+            is_coastal, is_border, economic_tier, population_density, income_level,
+            shipping_zone, delivery_complexity, standard_delivery_days,
+            express_delivery_available, latitude, longitude
+        ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
+        """;
+
+    /**
+     * OPTIMIZED: Bulk upsert with COPY FROM fallback
+     */
     public int bulkUpsert(List<GeographyInfo> geographyInfos) {
-        if (geographyInfos == null || geographyInfos.isEmpty()) {
-            return 0;
+        if (geographyInfos == null || geographyInfos.isEmpty()) return 0;
+
+        try {
+            return bulkInsertWithCopy(geographyInfos);
+        } catch (Exception e) {
+            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            return executeBatchUpsert(geographyInfos);
         }
-
-        log.info("Bulk upserting {} geography records", geographyInfos.size());
-
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, geographyInfos.stream()
-                .map(this::mapGeographyToParams)
-                .toList()
-        ).length;
     }
 
-    // Find geography info by order IDs
     public List<GeographyInfo> findByOrderIds(Set<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) {
-            return List.of();
-        }
+        if (orderIds == null || orderIds.isEmpty()) return List.of();
 
         String sql = "SELECT * FROM tbl_geography_info WHERE order_id = ANY(?)";
-        return jdbcTemplate.query(sql, geographyRowMapper(),
-                orderIds.toArray(new String[0]));
+        return jdbcTemplate.query(sql, geographyRowMapper(), orderIds.toArray(new String[0]));
     }
 
-    // Find by order ID
     public GeographyInfo findByOrderId(String orderId) {
         String sql = "SELECT * FROM tbl_geography_info WHERE order_id = ?";
         List<GeographyInfo> results = jdbcTemplate.query(sql, geographyRowMapper(), orderId);
         return results.isEmpty() ? null : results.get(0);
     }
 
-    // Delete by order IDs
     public int deleteByOrderIds(Set<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) {
-            return 0;
-        }
+        if (orderIds == null || orderIds.isEmpty()) return 0;
 
         String sql = "DELETE FROM tbl_geography_info WHERE order_id = ANY(?)";
         return jdbcTemplate.update(sql, orderIds.toArray(new String[0]));
     }
 
-    // Get total count
     public long count() {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tbl_geography_info", Long.class);
     }
 
-    // Helper methods
-    private Object[] mapGeographyToParams(GeographyInfo geography) {
+    // === COPY FROM Implementation ===
+
+    private int bulkInsertWithCopy(List<GeographyInfo> geographyInfos) throws Exception {
+        log.info("Bulk inserting {} geography records using COPY FROM", geographyInfos.size());
+
+        String csvData = generateCsvData(geographyInfos);
+        return jdbcTemplate.execute((Connection conn) -> {
+            CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+            try (StringReader reader = new StringReader(csvData)) {
+                return (int) copyManager.copyIn(COPY_SQL, reader);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    private String generateCsvData(List<GeographyInfo> geographyInfos) {
+        return geographyInfos.stream()
+                .map(geography -> CsvFormatter.joinCsvRow(
+                        geography.getOrderId(), geography.getGeographyKey(), geography.getCountryCode(),
+                        geography.getCountryName(), geography.getRegionCode(), geography.getRegionName(),
+                        geography.getProvinceCode(), geography.getProvinceName(), geography.getProvinceType(),
+                        geography.getDistrictCode(), geography.getDistrictName(), geography.getDistrictType(),
+                        geography.getWardCode(), geography.getWardName(), geography.getWardType(),
+                        CsvFormatter.formatBoolean(geography.getIsUrban()), CsvFormatter.formatBoolean(geography.getIsMetropolitan()),
+                        CsvFormatter.formatBoolean(geography.getIsCoastal()), CsvFormatter.formatBoolean(geography.getIsBorder()),
+                        geography.getEconomicTier(), geography.getPopulationDensity(), geography.getIncomeLevel(),
+                        geography.getShippingZone(), geography.getDeliveryComplexity(), geography.getStandardDeliveryDays(),
+                        CsvFormatter.formatBoolean(geography.getExpressDeliveryAvailable()), geography.getLatitude(), geography.getLongitude()
+                ))
+                .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private int executeBatchUpsert(List<GeographyInfo> geographyInfos) {
+        log.info("Batch upserting {} geography records", geographyInfos.size());
+        return jdbcTemplate.batchUpdate(UPSERT_SQL, geographyInfos.stream()
+                .map(this::mapToParams).toList()).length;
+    }
+
+    private Object[] mapToParams(GeographyInfo g) {
         return new Object[]{
-                geography.getOrderId(),
-                geography.getGeographyKey(),
-                geography.getCountryCode(),
-                geography.getCountryName(),
-                geography.getRegionCode(),
-                geography.getRegionName(),
-                geography.getProvinceCode(),
-                geography.getProvinceName(),
-                geography.getProvinceType(),
-                geography.getDistrictCode(),
-                geography.getDistrictName(),
-                geography.getDistrictType(),
-                geography.getWardCode(),
-                geography.getWardName(),
-                geography.getWardType(),
-                geography.getIsUrban(),
-                geography.getIsMetropolitan(),
-                geography.getIsCoastal(),
-                geography.getIsBorder(),
-                geography.getEconomicTier(),
-                geography.getPopulationDensity(),
-                geography.getIncomeLevel(),
-                geography.getShippingZone(),
-                geography.getDeliveryComplexity(),
-                geography.getStandardDeliveryDays(),
-                geography.getExpressDeliveryAvailable(),
-                geography.getLatitude(),
-                geography.getLongitude()
+                g.getOrderId(), g.getGeographyKey(), g.getCountryCode(), g.getCountryName(),
+                g.getRegionCode(), g.getRegionName(), g.getProvinceCode(), g.getProvinceName(),
+                g.getProvinceType(), g.getDistrictCode(), g.getDistrictName(), g.getDistrictType(),
+                g.getWardCode(), g.getWardName(), g.getWardType(), g.getIsUrban(), g.getIsMetropolitan(),
+                g.getIsCoastal(), g.getIsBorder(), g.getEconomicTier(), g.getPopulationDensity(),
+                g.getIncomeLevel(), g.getShippingZone(), g.getDeliveryComplexity(),
+                g.getStandardDeliveryDays(), g.getExpressDeliveryAvailable(), g.getLatitude(), g.getLongitude()
         };
     }
 

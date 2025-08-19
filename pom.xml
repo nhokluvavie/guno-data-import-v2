@@ -148,6 +148,13 @@
             <artifactId>postgresql</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Ensure PostgreSQL version supports COPY -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.1</version> <!-- Latest version -->
+        </dependency>
     </dependencies>
 
     <build>

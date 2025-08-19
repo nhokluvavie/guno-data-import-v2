@@ -1,16 +1,23 @@
 package com.guno.dataimport.repository;
 
 import com.guno.dataimport.entity.OrderStatus;
+import com.guno.dataimport.util.CsvFormatter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.postgresql.copy.CopyManager;
+import org.postgresql.core.BaseConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+
+import java.io.IOException;
+import java.io.StringReader;
+import java.sql.Connection;
 import java.util.List;
 import java.util.Set;
 
 /**
- * OrderStatus Repository - JDBC operations for OrderStatus entity
+ * OrderStatus Repository - JDBC operations with COPY FROM optimization
  */
 @Repository
 @RequiredArgsConstructor
@@ -35,38 +42,40 @@ public class OrderStatusRepository {
             is_expected_transition = EXCLUDED.is_expected_transition
         """;
 
-    // Bulk upsert order status records
+    private static final String COPY_SQL = """
+        COPY tbl_order_status (
+            status_key, order_id, transition_date_key, transition_timestamp,
+            duration_in_previous_status_hours, transition_reason, transition_trigger,
+            changed_by, is_on_time_transition, is_expected_transition, history_key
+        ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
+        """;
+
+    /**
+     * OPTIMIZED: Bulk upsert with COPY FROM fallback
+     */
     public int bulkUpsert(List<OrderStatus> orderStatuses) {
-        if (orderStatuses == null || orderStatuses.isEmpty()) {
-            return 0;
+        if (orderStatuses == null || orderStatuses.isEmpty()) return 0;
+
+        try {
+            return bulkInsertWithCopy(orderStatuses);
+        } catch (Exception e) {
+            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            return executeBatchUpsert(orderStatuses);
         }
-
-        log.info("Bulk upserting {} order status records", orderStatuses.size());
-
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, orderStatuses.stream()
-                .map(this::mapOrderStatusToParams)
-                .toList()
-        ).length;
     }
 
-    // Find order statuses by order IDs
     public List<OrderStatus> findByOrderIds(Set<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) {
-            return List.of();
-        }
+        if (orderIds == null || orderIds.isEmpty()) return List.of();
 
         String sql = "SELECT * FROM tbl_order_status WHERE order_id = ANY(?) ORDER BY transition_timestamp DESC";
-        return jdbcTemplate.query(sql, orderStatusRowMapper(),
-                orderIds.toArray(new String[0]));
+        return jdbcTemplate.query(sql, orderStatusRowMapper(), orderIds.toArray(new String[0]));
     }
 
-    // Find by order ID
     public List<OrderStatus> findByOrderId(String orderId) {
         String sql = "SELECT * FROM tbl_order_status WHERE order_id = ? ORDER BY transition_timestamp DESC";
         return jdbcTemplate.query(sql, orderStatusRowMapper(), orderId);
     }
 
-    // Find current status for order
     public OrderStatus findCurrentStatusByOrderId(String orderId) {
         String sql = """
             SELECT * FROM tbl_order_status 
@@ -78,48 +87,68 @@ public class OrderStatusRepository {
         return results.isEmpty() ? null : results.get(0);
     }
 
-    // Find by status key and order ID (composite key)
     public OrderStatus findByStatusKeyAndOrderId(Long statusKey, String orderId) {
         String sql = "SELECT * FROM tbl_order_status WHERE status_key = ? AND order_id = ?";
         List<OrderStatus> results = jdbcTemplate.query(sql, orderStatusRowMapper(), statusKey, orderId);
         return results.isEmpty() ? null : results.get(0);
     }
 
-    // Delete by order IDs
     public int deleteByOrderIds(Set<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) {
-            return 0;
-        }
+        if (orderIds == null || orderIds.isEmpty()) return 0;
 
         String sql = "DELETE FROM tbl_order_status WHERE order_id = ANY(?)";
         return jdbcTemplate.update(sql, orderIds.toArray(new String[0]));
     }
 
-    // Get total count
     public long count() {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tbl_order_status", Long.class);
     }
 
-    // Get status history count for order
     public int countByOrderId(String orderId) {
-        String sql = "SELECT COUNT(*) FROM tbl_order_status WHERE order_id = ?";
-        return jdbcTemplate.queryForObject(sql, Integer.class, orderId);
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM tbl_order_status WHERE order_id = ?", Integer.class, orderId);
     }
 
-    // Helper methods
-    private Object[] mapOrderStatusToParams(OrderStatus orderStatus) {
+    // === COPY FROM Implementation ===
+
+    private int bulkInsertWithCopy(List<OrderStatus> orderStatuses) throws Exception {
+        log.info("Bulk inserting {} order status records using COPY FROM", orderStatuses.size());
+
+        String csvData = generateCsvData(orderStatuses);
+        return jdbcTemplate.execute((Connection conn) -> {
+            CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+            try (StringReader reader = new StringReader(csvData)) {
+                return (int) copyManager.copyIn(COPY_SQL, reader);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    private String generateCsvData(List<OrderStatus> orderStatuses) {
+        return orderStatuses.stream()
+                .map(status -> CsvFormatter.joinCsvRow(
+                        status.getStatusKey(), status.getOrderId(), status.getTransitionDateKey(),
+                        CsvFormatter.formatDateTime(status.getTransitionTimestamp()),
+                        status.getDurationInPreviousStatusHours(), status.getTransitionReason(),
+                        status.getTransitionTrigger(), status.getChangedBy(),
+                        CsvFormatter.formatBoolean(status.getIsOnTimeTransition()),
+                        CsvFormatter.formatBoolean(status.getIsExpectedTransition()), status.getHistoryKey()
+                ))
+                .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private int executeBatchUpsert(List<OrderStatus> orderStatuses) {
+        log.info("Batch upserting {} order status records", orderStatuses.size());
+        return jdbcTemplate.batchUpdate(UPSERT_SQL, orderStatuses.stream()
+                .map(this::mapToParams).toList()).length;
+    }
+
+    private Object[] mapToParams(OrderStatus s) {
         return new Object[]{
-                orderStatus.getStatusKey(),
-                orderStatus.getOrderId(),
-                orderStatus.getTransitionDateKey(),
-                orderStatus.getTransitionTimestamp(),
-                orderStatus.getDurationInPreviousStatusHours(),
-                orderStatus.getTransitionReason(),
-                orderStatus.getTransitionTrigger(),
-                orderStatus.getChangedBy(),
-                orderStatus.getIsOnTimeTransition(),
-                orderStatus.getIsExpectedTransition(),
-                orderStatus.getHistoryKey()
+                s.getStatusKey(), s.getOrderId(), s.getTransitionDateKey(), s.getTransitionTimestamp(),
+                s.getDurationInPreviousStatusHours(), s.getTransitionReason(), s.getTransitionTrigger(),
+                s.getChangedBy(), s.getIsOnTimeTransition(), s.getIsExpectedTransition(), s.getHistoryKey()
         };
     }
 

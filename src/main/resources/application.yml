@@ -95,6 +95,11 @@ processing:
     enabled: true
     skip-invalid-records: true
 
+  bulk-insert:
+    preferred-method: COPY_FROM
+    fallback-method: MULTI_VALUE
+    copy-batch-size: 10000
+
 # Scheduler Configuration
 scheduler:
   import:

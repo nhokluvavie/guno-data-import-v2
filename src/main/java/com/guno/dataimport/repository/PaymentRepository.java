@@ -1,16 +1,23 @@
 package com.guno.dataimport.repository;
 
 import com.guno.dataimport.entity.PaymentInfo;
+import com.guno.dataimport.util.CsvFormatter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.postgresql.copy.CopyManager;
+import org.postgresql.core.BaseConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+
+import java.io.IOException;
+import java.io.StringReader;
+import java.sql.Connection;
 import java.util.List;
 import java.util.Set;
 
 /**
- * Payment Repository - JDBC operations for PaymentInfo entity
+ * Payment Repository - JDBC operations with COPY FROM optimization
  */
 @Repository
 @RequiredArgsConstructor
@@ -37,75 +44,100 @@ public class PaymentRepository {
             fraud_score = EXCLUDED.fraud_score
         """;
 
-    // Bulk upsert payment info
+    private static final String COPY_SQL = """
+        COPY tbl_payment_info (
+            order_id, payment_key, payment_method, payment_category, payment_provider,
+            is_cod, is_prepaid, is_installment, installment_months, supports_refund,
+            supports_partial_refund, refund_processing_days, risk_level,
+            requires_verification, fraud_score, transaction_fee_rate, processing_fee,
+            payment_processing_time_minutes, settlement_days
+        ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
+        """;
+
+    /**
+     * OPTIMIZED: Bulk upsert with COPY FROM fallback
+     */
     public int bulkUpsert(List<PaymentInfo> paymentInfos) {
-        if (paymentInfos == null || paymentInfos.isEmpty()) {
-            return 0;
+        if (paymentInfos == null || paymentInfos.isEmpty()) return 0;
+
+        try {
+            return bulkInsertWithCopy(paymentInfos);
+        } catch (Exception e) {
+            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            return executeBatchUpsert(paymentInfos);
         }
-
-        log.info("Bulk upserting {} payment records", paymentInfos.size());
-
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, paymentInfos.stream()
-                .map(this::mapPaymentToParams)
-                .toList()
-        ).length;
     }
 
-    // Find payment info by order IDs
     public List<PaymentInfo> findByOrderIds(Set<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) {
-            return List.of();
-        }
+        if (orderIds == null || orderIds.isEmpty()) return List.of();
 
         String sql = "SELECT * FROM tbl_payment_info WHERE order_id = ANY(?)";
-        return jdbcTemplate.query(sql, paymentRowMapper(),
-                orderIds.toArray(new String[0]));
+        return jdbcTemplate.query(sql, paymentRowMapper(), orderIds.toArray(new String[0]));
     }
 
-    // Find by order ID
     public PaymentInfo findByOrderId(String orderId) {
         String sql = "SELECT * FROM tbl_payment_info WHERE order_id = ?";
         List<PaymentInfo> results = jdbcTemplate.query(sql, paymentRowMapper(), orderId);
         return results.isEmpty() ? null : results.get(0);
     }
 
-    // Delete by order IDs
     public int deleteByOrderIds(Set<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) {
-            return 0;
-        }
+        if (orderIds == null || orderIds.isEmpty()) return 0;
 
         String sql = "DELETE FROM tbl_payment_info WHERE order_id = ANY(?)";
         return jdbcTemplate.update(sql, orderIds.toArray(new String[0]));
     }
 
-    // Get total count
     public long count() {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tbl_payment_info", Long.class);
     }
 
-    // Helper methods
-    private Object[] mapPaymentToParams(PaymentInfo payment) {
+    // === COPY FROM Implementation ===
+
+    private int bulkInsertWithCopy(List<PaymentInfo> paymentInfos) throws Exception {
+        log.info("Bulk inserting {} payment records using COPY FROM", paymentInfos.size());
+
+        String csvData = generateCsvData(paymentInfos);
+        return jdbcTemplate.execute((Connection conn) -> {
+            CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+            try (StringReader reader = new StringReader(csvData)) {
+                return (int) copyManager.copyIn(COPY_SQL, reader);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    private String generateCsvData(List<PaymentInfo> paymentInfos) {
+        return paymentInfos.stream()
+                .map(payment -> CsvFormatter.joinCsvRow(
+                        payment.getOrderId(), payment.getPaymentKey(), payment.getPaymentMethod(),
+                        payment.getPaymentCategory(), payment.getPaymentProvider(),
+                        CsvFormatter.formatBoolean(payment.getIsCod()), CsvFormatter.formatBoolean(payment.getIsPrepaid()),
+                        CsvFormatter.formatBoolean(payment.getIsInstallment()), payment.getInstallmentMonths(),
+                        CsvFormatter.formatBoolean(payment.getSupportsRefund()), CsvFormatter.formatBoolean(payment.getSupportsPartialRefund()),
+                        payment.getRefundProcessingDays(), payment.getRiskLevel(),
+                        CsvFormatter.formatBoolean(payment.getRequiresVerification()), payment.getFraudScore(),
+                        payment.getTransactionFeeRate(), payment.getProcessingFee(),
+                        payment.getPaymentProcessingTimeMinutes(), payment.getSettlementDays()
+                ))
+                .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private int executeBatchUpsert(List<PaymentInfo> paymentInfos) {
+        log.info("Batch upserting {} payment records", paymentInfos.size());
+        return jdbcTemplate.batchUpdate(UPSERT_SQL, paymentInfos.stream()
+                .map(this::mapToParams).toList()).length;
+    }
+
+    private Object[] mapToParams(PaymentInfo p) {
         return new Object[]{
-                payment.getOrderId(),
-                payment.getPaymentKey(),
-                payment.getPaymentMethod(),
-                payment.getPaymentCategory(),
-                payment.getPaymentProvider(),
-                payment.getIsCod(),
-                payment.getIsPrepaid(),
-                payment.getIsInstallment(),
-                payment.getInstallmentMonths(),
-                payment.getSupportsRefund(),
-                payment.getSupportsPartialRefund(),
-                payment.getRefundProcessingDays(),
-                payment.getRiskLevel(),
-                payment.getRequiresVerification(),
-                payment.getFraudScore(),
-                payment.getTransactionFeeRate(),
-                payment.getProcessingFee(),
-                payment.getPaymentProcessingTimeMinutes(),
-                payment.getSettlementDays()
+                p.getOrderId(), p.getPaymentKey(), p.getPaymentMethod(), p.getPaymentCategory(),
+                p.getPaymentProvider(), p.getIsCod(), p.getIsPrepaid(), p.getIsInstallment(),
+                p.getInstallmentMonths(), p.getSupportsRefund(), p.getSupportsPartialRefund(),
+                p.getRefundProcessingDays(), p.getRiskLevel(), p.getRequiresVerification(),
+                p.getFraudScore(), p.getTransactionFeeRate(), p.getProcessingFee(),
+                p.getPaymentProcessingTimeMinutes(), p.getSettlementDays()
         };
     }
 

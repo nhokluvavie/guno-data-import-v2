@@ -1,19 +1,24 @@
 package com.guno.dataimport.repository;
 
 import com.guno.dataimport.entity.Customer;
+import com.guno.dataimport.util.CsvFormatter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.postgresql.copy.CopyManager;
+import org.postgresql.core.BaseConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+
+import java.io.IOException;
+import java.io.StringReader;
+import java.sql.Connection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Customer Repository - JDBC operations for Customer entity
+ * Customer Repository - JDBC operations with COPY FROM optimization
  */
 @Repository
 @RequiredArgsConstructor
@@ -21,19 +26,6 @@ import java.util.Set;
 public class CustomerRepository {
 
     private final JdbcTemplate jdbcTemplate;
-
-    private static final String INSERT_SQL = """
-        INSERT INTO tbl_customer (
-            customer_id, customer_key, platform_customer_id, phone_hash, email_hash,
-            gender, age_group, customer_segment, customer_tier, acquisition_channel,
-            first_order_date, last_order_date, total_orders, total_spent, average_order_value,
-            total_items_purchased, days_since_first_order, days_since_last_order,
-            purchase_frequency_days, return_rate, cancellation_rate, cod_preference_rate,
-            favorite_category, favorite_brand, preferred_payment_method, preferred_platform,
-            primary_shipping_province, ships_to_multiple_provinces, loyalty_points,
-            referral_count, is_referrer
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """;
 
     private static final String UPSERT_SQL = """
         INSERT INTO tbl_customer (
@@ -48,94 +40,112 @@ public class CustomerRepository {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (customer_id) DO UPDATE SET
             platform_customer_id = EXCLUDED.platform_customer_id,
-            phone_hash = EXCLUDED.phone_hash,
-            email_hash = EXCLUDED.email_hash,
-            gender = EXCLUDED.gender,
             last_order_date = EXCLUDED.last_order_date,
             total_orders = EXCLUDED.total_orders,
             total_spent = EXCLUDED.total_spent,
-            average_order_value = EXCLUDED.average_order_value,
-            total_items_purchased = EXCLUDED.total_items_purchased,
-            days_since_last_order = EXCLUDED.days_since_last_order,
             preferred_platform = EXCLUDED.preferred_platform
         """;
 
-    // Bulk upsert customers
+    private static final String COPY_SQL = """
+        COPY tbl_customer (
+            customer_id, customer_key, platform_customer_id, phone_hash, email_hash,
+            gender, age_group, customer_segment, customer_tier, acquisition_channel,
+            first_order_date, last_order_date, total_orders, total_spent, average_order_value,
+            total_items_purchased, days_since_first_order, days_since_last_order,
+            purchase_frequency_days, return_rate, cancellation_rate, cod_preference_rate,
+            favorite_category, favorite_brand, preferred_payment_method, preferred_platform,
+            primary_shipping_province, ships_to_multiple_provinces, loyalty_points,
+            referral_count, is_referrer
+        ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
+        """;
+
+    /**
+     * OPTIMIZED: Bulk upsert with COPY FROM fallback
+     */
     public int bulkUpsert(List<Customer> customers) {
-        if (customers == null || customers.isEmpty()) {
-            return 0;
+        if (customers == null || customers.isEmpty()) return 0;
+
+        // Try COPY FROM first for performance
+        try {
+            return bulkInsertWithCopy(customers);
+        } catch (Exception e) {
+            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            return executeBatchUpsert(customers);
         }
-
-        log.info("Bulk upserting {} customers", customers.size());
-
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, customers.stream()
-                .map(this::mapCustomerToParams)
-                .toList()
-        ).length;
     }
 
-    // Find existing customers by IDs
+    /**
+     * Find existing customers by IDs
+     */
     public Map<String, Customer> findByIds(Set<String> customerIds) {
-        if (customerIds == null || customerIds.isEmpty()) {
-            return Map.of();
-        }
+        if (customerIds == null || customerIds.isEmpty()) return Map.of();
 
         String sql = "SELECT * FROM tbl_customer WHERE customer_id = ANY(?)";
-        List<Customer> customers = jdbcTemplate.query(sql, customerRowMapper(),
-                customerIds.toArray(new String[0]));
-
-        return customers.stream()
-                .collect(java.util.stream.Collectors.toMap(
-                        Customer::getCustomerId,
-                        customer -> customer
-                ));
+        return jdbcTemplate.query(sql, customerRowMapper(), customerIds.toArray(new String[0]))
+                .stream().collect(java.util.stream.Collectors.toMap(
+                        Customer::getCustomerId, customer -> customer));
     }
 
-    // Check if customer exists
     public boolean exists(String customerId) {
-        String sql = "SELECT 1 FROM tbl_customer WHERE customer_id = ?";
-        return !jdbcTemplate.queryForList(sql, customerId).isEmpty();
+        return !jdbcTemplate.queryForList("SELECT 1 FROM tbl_customer WHERE customer_id = ?", customerId).isEmpty();
     }
 
-    // Get total customer count
     public long count() {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tbl_customer", Long.class);
     }
 
-    // Helper methods
-    private Object[] mapCustomerToParams(Customer customer) {
+    // === COPY FROM Implementation ===
+
+    private int bulkInsertWithCopy(List<Customer> customers) throws Exception {
+        log.info("Bulk inserting {} customers using COPY FROM", customers.size());
+
+        String csvData = generateCsvData(customers);
+        return jdbcTemplate.execute((Connection conn) -> {
+            CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+            try (StringReader reader = new StringReader(csvData)) {
+                return (int) copyManager.copyIn(COPY_SQL, reader);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    private String generateCsvData(List<Customer> customers) {
+        return customers.stream()
+                .map(customer -> CsvFormatter.joinCsvRow(
+                        customer.getCustomerId(), customer.getCustomerKey(), customer.getPlatformCustomerId(),
+                        customer.getPhoneHash(), customer.getEmailHash(), customer.getGender(),
+                        customer.getAgeGroup(), customer.getCustomerSegment(), customer.getCustomerTier(),
+                        customer.getAcquisitionChannel(), CsvFormatter.formatDateTime(customer.getFirstOrderDate()),
+                        CsvFormatter.formatDateTime(customer.getLastOrderDate()), customer.getTotalOrders(),
+                        customer.getTotalSpent(), customer.getAverageOrderValue(), customer.getTotalItemsPurchased(),
+                        customer.getDaysSinceFirstOrder(), customer.getDaysSinceLastOrder(),
+                        customer.getPurchaseFrequencyDays(), customer.getReturnRate(), customer.getCancellationRate(),
+                        customer.getCodPreferenceRate(), customer.getFavoriteCategory(), customer.getFavoriteBrand(),
+                        customer.getPreferredPaymentMethod(), customer.getPreferredPlatform(),
+                        customer.getPrimaryShippingProvince(), CsvFormatter.formatBoolean(customer.getShipsToMultipleProvinces()),
+                        customer.getLoyaltyPoints(), customer.getReferralCount(), CsvFormatter.formatBoolean(customer.getIsReferrer())
+                ))
+                .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private int executeBatchUpsert(List<Customer> customers) {
+        log.info("Batch upserting {} customers", customers.size());
+        return jdbcTemplate.batchUpdate(UPSERT_SQL, customers.stream()
+                .map(this::mapToParams).toList()).length;
+    }
+
+    private Object[] mapToParams(Customer c) {
         return new Object[]{
-                customer.getCustomerId(),
-                customer.getCustomerKey(),
-                customer.getPlatformCustomerId(),
-                customer.getPhoneHash(),
-                customer.getEmailHash(),
-                customer.getGender(),
-                customer.getAgeGroup(),
-                customer.getCustomerSegment(),
-                customer.getCustomerTier(),
-                customer.getAcquisitionChannel(),
-                customer.getFirstOrderDate(),
-                customer.getLastOrderDate(),
-                customer.getTotalOrders(),
-                customer.getTotalSpent(),
-                customer.getAverageOrderValue(),
-                customer.getTotalItemsPurchased(),
-                customer.getDaysSinceFirstOrder(),
-                customer.getDaysSinceLastOrder(),
-                customer.getPurchaseFrequencyDays(),
-                customer.getReturnRate(),
-                customer.getCancellationRate(),
-                customer.getCodPreferenceRate(),
-                customer.getFavoriteCategory(),
-                customer.getFavoriteBrand(),
-                customer.getPreferredPaymentMethod(),
-                customer.getPreferredPlatform(),
-                customer.getPrimaryShippingProvince(),
-                customer.getShipsToMultipleProvinces(),
-                customer.getLoyaltyPoints(),
-                customer.getReferralCount(),
-                customer.getIsReferrer()
+                c.getCustomerId(), c.getCustomerKey(), c.getPlatformCustomerId(), c.getPhoneHash(),
+                c.getEmailHash(), c.getGender(), c.getAgeGroup(), c.getCustomerSegment(),
+                c.getCustomerTier(), c.getAcquisitionChannel(), c.getFirstOrderDate(), c.getLastOrderDate(),
+                c.getTotalOrders(), c.getTotalSpent(), c.getAverageOrderValue(), c.getTotalItemsPurchased(),
+                c.getDaysSinceFirstOrder(), c.getDaysSinceLastOrder(), c.getPurchaseFrequencyDays(),
+                c.getReturnRate(), c.getCancellationRate(), c.getCodPreferenceRate(), c.getFavoriteCategory(),
+                c.getFavoriteBrand(), c.getPreferredPaymentMethod(), c.getPreferredPlatform(),
+                c.getPrimaryShippingProvince(), c.getShipsToMultipleProvinces(), c.getLoyaltyPoints(),
+                c.getReferralCount(), c.getIsReferrer()
         };
     }
 

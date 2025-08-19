@@ -1,17 +1,24 @@
 package com.guno.dataimport.repository;
 
 import com.guno.dataimport.entity.Product;
+import com.guno.dataimport.util.CsvFormatter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.postgresql.copy.CopyManager;
+import org.postgresql.core.BaseConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+
+import java.io.IOException;
+import java.io.StringReader;
+import java.sql.Connection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Product Repository - JDBC operations for Product entity
+ * Product Repository - JDBC operations with COPY FROM optimization
  */
 @Repository
 @RequiredArgsConstructor
@@ -31,8 +38,6 @@ public class ProductRepository {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (sku, platform_product_id) DO UPDATE SET
             product_name = EXCLUDED.product_name,
-            product_description = EXCLUDED.product_description,
-            brand = EXCLUDED.brand,
             retail_price = EXCLUDED.retail_price,
             original_price = EXCLUDED.original_price,
             is_active = EXCLUDED.is_active,
@@ -40,27 +45,37 @@ public class ProductRepository {
             image_count = EXCLUDED.image_count
         """;
 
-    // Bulk upsert products
+    private static final String COPY_SQL = """
+        COPY tbl_product (
+            sku, platform_product_id, product_id, variation_id, barcode, product_name,
+            product_description, brand, model, category_level_1, category_level_2,
+            category_level_3, category_path, color, "size", material, weight_gram,
+            dimensions, cost_price, retail_price, original_price, price_range,
+            is_active, is_featured, is_seasonal, is_new_arrival, is_best_seller,
+            primary_image_url, image_count, seo_title, seo_keywords
+        ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
+        """;
+
+    /**
+     * OPTIMIZED: Bulk upsert with COPY FROM fallback
+     */
     public int bulkUpsert(List<Product> products) {
-        if (products == null || products.isEmpty()) {
-            return 0;
+        if (products == null || products.isEmpty()) return 0;
+
+        try {
+            return bulkInsertWithCopy(products);
+        } catch (Exception e) {
+            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            return executeBatchUpsert(products);
         }
-
-        log.info("Bulk upserting {} products", products.size());
-
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, products.stream()
-                .map(this::mapProductToParams)
-                .toList()
-        ).length;
     }
 
-    // Find existing products by composite keys
+    /**
+     * Find existing products by composite keys
+     */
     public Map<String, Product> findByKeys(Set<String> compositeKeys) {
-        if (compositeKeys == null || compositeKeys.isEmpty()) {
-            return Map.of();
-        }
+        if (compositeKeys == null || compositeKeys.isEmpty()) return Map.of();
 
-        // Split composite keys (sku_platformProductId)
         StringBuilder sql = new StringBuilder("SELECT * FROM tbl_product WHERE ");
         List<Object> params = new java.util.ArrayList<>();
 
@@ -76,67 +91,75 @@ public class ProductRepository {
             }
         }
 
-        List<Product> products = jdbcTemplate.query(sql.toString(), productRowMapper(),
-                params.toArray());
-
-        return products.stream()
-                .collect(java.util.stream.Collectors.toMap(
+        return jdbcTemplate.query(sql.toString(), productRowMapper(), params.toArray())
+                .stream().collect(java.util.stream.Collectors.toMap(
                         product -> product.getSku() + "_" + product.getPlatformProductId(),
-                        product -> product
-                ));
+                        product -> product));
     }
 
-    // Find by SKU
     public List<Product> findBySku(String sku) {
-        String sql = "SELECT * FROM tbl_product WHERE sku = ?";
-        return jdbcTemplate.query(sql, productRowMapper(), sku);
+        return jdbcTemplate.query("SELECT * FROM tbl_product WHERE sku = ?", productRowMapper(), sku);
     }
 
-    // Check if product exists
     public boolean exists(String sku, String platformProductId) {
-        String sql = "SELECT 1 FROM tbl_product WHERE sku = ? AND platform_product_id = ?";
-        return !jdbcTemplate.queryForList(sql, sku, platformProductId).isEmpty();
+        return !jdbcTemplate.queryForList(
+                "SELECT 1 FROM tbl_product WHERE sku = ? AND platform_product_id = ?",
+                sku, platformProductId).isEmpty();
     }
 
-    // Get total product count
     public long count() {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tbl_product", Long.class);
     }
 
-    // Helper methods
-    private Object[] mapProductToParams(Product product) {
+    // === COPY FROM Implementation ===
+
+    private int bulkInsertWithCopy(List<Product> products) throws Exception {
+        log.info("Bulk inserting {} products using COPY FROM", products.size());
+
+        String csvData = generateCsvData(products);
+        return jdbcTemplate.execute((Connection conn) -> {
+            CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+            try (StringReader reader = new StringReader(csvData)) {
+                return (int) copyManager.copyIn(COPY_SQL, reader);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    private String generateCsvData(List<Product> products) {
+        return products.stream()
+                .map(product -> CsvFormatter.joinCsvRow(
+                        product.getSku(), product.getPlatformProductId(), product.getProductId(),
+                        product.getVariationId(), product.getBarcode(), product.getProductName(),
+                        product.getProductDescription(), product.getBrand(), product.getModel(),
+                        product.getCategoryLevel1(), product.getCategoryLevel2(), product.getCategoryLevel3(),
+                        product.getCategoryPath(), product.getColor(), product.getSize(), product.getMaterial(),
+                        product.getWeightGram(), product.getDimensions(), product.getCostPrice(),
+                        product.getRetailPrice(), product.getOriginalPrice(), product.getPriceRange(),
+                        CsvFormatter.formatBoolean(product.getIsActive()), CsvFormatter.formatBoolean(product.getIsFeatured()),
+                        CsvFormatter.formatBoolean(product.getIsSeasonal()), CsvFormatter.formatBoolean(product.getIsNewArrival()),
+                        CsvFormatter.formatBoolean(product.getIsBestSeller()), product.getPrimaryImageUrl(),
+                        product.getImageCount(), product.getSeoTitle(), product.getSeoKeywords()
+                ))
+                .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private int executeBatchUpsert(List<Product> products) {
+        log.info("Batch upserting {} products", products.size());
+        return jdbcTemplate.batchUpdate(UPSERT_SQL, products.stream()
+                .map(this::mapToParams).toList()).length;
+    }
+
+    private Object[] mapToParams(Product p) {
         return new Object[]{
-                product.getSku(),
-                product.getPlatformProductId(),
-                product.getProductId(),
-                product.getVariationId(),
-                product.getBarcode(),
-                product.getProductName(),
-                product.getProductDescription(),
-                product.getBrand(),
-                product.getModel(),
-                product.getCategoryLevel1(),
-                product.getCategoryLevel2(),
-                product.getCategoryLevel3(),
-                product.getCategoryPath(),
-                product.getColor(),
-                product.getSize(),
-                product.getMaterial(),
-                product.getWeightGram(),
-                product.getDimensions(),
-                product.getCostPrice(),
-                product.getRetailPrice(),
-                product.getOriginalPrice(),
-                product.getPriceRange(),
-                product.getIsActive(),
-                product.getIsFeatured(),
-                product.getIsSeasonal(),
-                product.getIsNewArrival(),
-                product.getIsBestSeller(),
-                product.getPrimaryImageUrl(),
-                product.getImageCount(),
-                product.getSeoTitle(),
-                product.getSeoKeywords()
+                p.getSku(), p.getPlatformProductId(), p.getProductId(), p.getVariationId(), p.getBarcode(),
+                p.getProductName(), p.getProductDescription(), p.getBrand(), p.getModel(),
+                p.getCategoryLevel1(), p.getCategoryLevel2(), p.getCategoryLevel3(), p.getCategoryPath(),
+                p.getColor(), p.getSize(), p.getMaterial(), p.getWeightGram(), p.getDimensions(),
+                p.getCostPrice(), p.getRetailPrice(), p.getOriginalPrice(), p.getPriceRange(),
+                p.getIsActive(), p.getIsFeatured(), p.getIsSeasonal(), p.getIsNewArrival(),
+                p.getIsBestSeller(), p.getPrimaryImageUrl(), p.getImageCount(), p.getSeoTitle(), p.getSeoKeywords()
         };
     }
 

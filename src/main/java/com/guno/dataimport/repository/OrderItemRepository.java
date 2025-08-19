@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+import java.sql.Array;
 import java.util.List;
 import java.util.Set;
 
@@ -27,9 +28,6 @@ public class OrderItemRepository {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
 
-    private static final String DELETE_BY_ORDERS_SQL =
-            "DELETE FROM tbl_order_item WHERE order_id = ANY(?)";
-
     // Bulk insert order items (delete + insert approach)
     public int bulkInsert(List<OrderItem> orderItems) {
         if (orderItems == null || orderItems.isEmpty()) {
@@ -44,7 +42,7 @@ public class OrderItemRepository {
         ).length;
     }
 
-    // Delete order items by order IDs (for refresh strategy)
+    // FIXED: Delete order items by order IDs with proper array handling
     public int deleteByOrderIds(Set<String> orderIds) {
         if (orderIds == null || orderIds.isEmpty()) {
             return 0;
@@ -52,8 +50,32 @@ public class OrderItemRepository {
 
         log.info("Deleting order items for {} orders", orderIds.size());
 
-        return jdbcTemplate.update(DELETE_BY_ORDERS_SQL,
-                orderIds.toArray(new String[0]));
+        try {
+            // Convert Set to Array for PostgreSQL
+            String[] orderIdArray = orderIds.toArray(new String[0]);
+            Array sqlArray = jdbcTemplate.getDataSource().getConnection().createArrayOf("varchar", orderIdArray);
+
+            String sql = "DELETE FROM tbl_order_item WHERE order_id = ANY(?)";
+            return jdbcTemplate.update(sql, sqlArray);
+
+        } catch (Exception e) {
+            log.error("Failed to delete order items: {}", e.getMessage());
+
+            // Fallback: Use IN clause instead of ANY
+            if (orderIds.size() <= 1000) { // PostgreSQL IN limit
+                return deleteByOrderIdsWithIn(orderIds);
+            } else {
+                throw new RuntimeException("Too many order IDs for deletion: " + orderIds.size(), e);
+            }
+        }
+    }
+
+    // Fallback method using IN clause
+    private int deleteByOrderIdsWithIn(Set<String> orderIds) {
+        String placeholders = String.join(",", orderIds.stream().map(id -> "?").toList());
+        String sql = "DELETE FROM tbl_order_item WHERE order_id IN (" + placeholders + ")";
+
+        return jdbcTemplate.update(sql, orderIds.toArray());
     }
 
     // Find order items by order ID
@@ -68,9 +90,24 @@ public class OrderItemRepository {
             return List.of();
         }
 
-        String sql = "SELECT * FROM tbl_order_item WHERE order_id = ANY(?) ORDER BY order_id, item_sequence";
-        return jdbcTemplate.query(sql, orderItemRowMapper(),
-                orderIds.toArray(new String[0]));
+        try {
+            String[] orderIdArray = orderIds.toArray(new String[0]);
+            Array sqlArray = jdbcTemplate.getDataSource().getConnection().createArrayOf("varchar", orderIdArray);
+
+            String sql = "SELECT * FROM tbl_order_item WHERE order_id = ANY(?) ORDER BY order_id, item_sequence";
+            return jdbcTemplate.query(sql, orderItemRowMapper(), sqlArray);
+
+        } catch (Exception e) {
+            log.warn("Failed to query with ANY, using IN clause: {}", e.getMessage());
+            return findByOrderIdsWithIn(orderIds);
+        }
+    }
+
+    private List<OrderItem> findByOrderIdsWithIn(Set<String> orderIds) {
+        String placeholders = String.join(",", orderIds.stream().map(id -> "?").toList());
+        String sql = "SELECT * FROM tbl_order_item WHERE order_id IN (" + placeholders + ") ORDER BY order_id, item_sequence";
+
+        return jdbcTemplate.query(sql, orderItemRowMapper(), orderIds.toArray());
     }
 
     // Get total item count
@@ -84,7 +121,7 @@ public class OrderItemRepository {
         return jdbcTemplate.queryForObject(sql, Integer.class, orderId);
     }
 
-    // Bulk delete + insert (refresh strategy)
+    // FIXED: Bulk delete + insert (refresh strategy) with proper error handling
     public int bulkRefresh(Set<String> orderIds, List<OrderItem> newOrderItems) {
         if (orderIds == null || orderIds.isEmpty()) {
             return bulkInsert(newOrderItems);
@@ -93,14 +130,20 @@ public class OrderItemRepository {
         log.info("Refreshing order items for {} orders with {} new items",
                 orderIds.size(), newOrderItems != null ? newOrderItems.size() : 0);
 
-        // Delete existing items
-        int deletedCount = deleteByOrderIds(orderIds);
+        try {
+            // Delete existing items
+            int deletedCount = deleteByOrderIds(orderIds);
 
-        // Insert new items
-        int insertedCount = bulkInsert(newOrderItems);
+            // Insert new items
+            int insertedCount = bulkInsert(newOrderItems);
 
-        log.info("Deleted {} items, inserted {} items", deletedCount, insertedCount);
-        return insertedCount;
+            log.info("Deleted {} items, inserted {} items", deletedCount, insertedCount);
+            return insertedCount;
+
+        } catch (Exception e) {
+            log.error("Bulk refresh failed: {}", e.getMessage());
+            throw new RuntimeException("Failed to refresh order items", e);
+        }
     }
 
     // Helper methods

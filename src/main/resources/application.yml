@@ -72,7 +72,7 @@ api:
     max-retries: 5
     retry-delay-ms: 2000
     default-date: ""            # Empty = use today's date
-    filter-date: "update"
+    source: "facebook"
 
   # Common API settings
   common:

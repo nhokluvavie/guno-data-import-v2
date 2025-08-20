@@ -92,13 +92,13 @@ class FacebookApiClientTest {
         log.info("Testing filter-date parameter");
 
         String date = "2025-08-12";
-        String filterDate = "create"; // Alternative to default "update"
+        String source = "facebook"; // Alternative to default "update"
 
-        FacebookApiResponse response = facebookApiClient.fetchOrders(date, 1, 10, filterDate);
+        FacebookApiResponse response = facebookApiClient.fetchOrders(date, 1, 10, source);
 
         assertThat(response).isNotNull();
         log.info("Filter-date test - Date: {}, Filter: {}, Status: {}",
-                date, filterDate, response.getStatus());
+                date, source, response.getStatus());
 
         // Test structure regardless of API success
         assertThat(response.getMessage()).isNotNull();

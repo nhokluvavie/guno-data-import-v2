@@ -45,8 +45,8 @@ public class FacebookApiClient {
     @Value("${api.facebook.default-date:}")
     private String defaultDate;
 
-    @Value("${api.facebook.filter-date:update}")
-    private String defaultFilterDate;
+    @Value("${api.facebook.source:facebook}")
+    private String defaultSource;
 
     /**
      * Fetch Facebook orders from API with default date (today)
@@ -67,18 +67,18 @@ public class FacebookApiClient {
      * Fetch orders with pagination and date
      */
     public FacebookApiResponse fetchOrders(String date, int page, int pageSize) {
-        return fetchOrders(date, page, pageSize, defaultFilterDate);
+        return fetchOrders(date, page, pageSize, defaultSource);
     }
 
     /**
      * Fetch orders with full parameters
      */
-    public FacebookApiResponse fetchOrders(String date, int page, int pageSize, String filterDate) {
+    public FacebookApiResponse fetchOrders(String date, int page, int pageSize, String source) {
         Map<String, Object> params = new HashMap<>();
         params.put("date", date);
         params.put("page", page);
         params.put("limit", pageSize);
-        params.put("filter-date", filterDate);
+        params.put("source", source);
 
         return callApiWithRetry(baseUrl, params);
     }

@@ -37,7 +37,7 @@ api:
     max-retries: 3
     retry-delay-ms: 1000
     default-date: "2025-08-18"  # Configurable date for testing
-    filter-date: "update"       # Default filter-date
+    source: "facebook"       # Default source
 
   # Common API settings for test
   common:

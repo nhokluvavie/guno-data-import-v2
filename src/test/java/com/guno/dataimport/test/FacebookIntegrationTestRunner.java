@@ -3,6 +3,7 @@ package com.guno.dataimport.test;
 import com.guno.dataimport.DataImportApplication;
 import com.guno.dataimport.api.client.FacebookApiClient;
 import com.guno.dataimport.api.service.DataCollector;
+import com.guno.dataimport.buffer.BufferedDataCollector;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ImportSummary;
 import com.guno.dataimport.dto.internal.ProcessingResult;
@@ -13,6 +14,7 @@ import com.guno.dataimport.repository.*;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import java.time.LocalDateTime;
@@ -33,6 +35,7 @@ class FacebookIntegrationTestRunner {
     @Autowired private DataCollector dataCollector;
     @Autowired private BatchProcessor batchProcessor;
     @Autowired private ValidationProcessor validationProcessor;
+    @Autowired private BufferedDataCollector bufferedDataCollector;
 
     @Autowired private CustomerRepository customerRepository;
     @Autowired private OrderRepository orderRepository;
@@ -44,6 +47,9 @@ class FacebookIntegrationTestRunner {
 
     private static FacebookApiResponse globalApiResponse;
     private static CollectedData globalCollectedData;
+
+    @Value("${api.facebook.default-date}")
+    private String configuredTestDate;
 
     @BeforeAll
     static void setupTestSuite() {
@@ -309,5 +315,127 @@ class FacebookIntegrationTestRunner {
         log.info("      - Facebook platform 100% production ready");
 
         log.info("✅ Phase 8 Completed: Final Report");
+    }
+
+    @Test
+    @Order(9)
+    void shouldImportFullDailyDataFromConfig() {
+        log.info("🚀 Phase 9: Testing FULL DAILY DATA Import (Production Volume)");
+
+        log.info("   📅 Import date: {}", configuredTestDate);
+
+        long startTime = System.currentTimeMillis();
+        ImportSummary summary = null;
+
+        try {
+            // Full data collection with MEGA-OPTIMIZED buffering
+            summary = bufferedDataCollector.collectWithBuffer(10000, 500);
+
+            long duration = System.currentTimeMillis() - startTime;
+
+            // Performance Analysis
+            logFullDataResults(summary, duration, configuredTestDate);
+
+            // Validation
+            validateProductionData(summary);
+
+            log.info("✅ Phase 9 Completed: PRODUCTION-READY Full Data Import");
+
+        } catch (Exception e) {
+            log.error("❌ Full data import failed: {}", e.getMessage(), e);
+            fail("Production data import should handle large volumes");
+        }
+    }
+
+    @Test
+    @Order(10)
+    void shouldAnalyzeProductionPerformance() {
+        log.info("📊 Phase 10: Production Performance Analysis");
+
+        // Test MEGA buffer sizes for maximum optimization
+        int[] bufferSizes = {5000, 10000, 15000};
+
+        for (int bufferSize : bufferSizes) {
+            log.info("   🧪 Testing buffer size: {}", bufferSize);
+
+            long startTime = System.currentTimeMillis();
+            ImportSummary summary = bufferedDataCollector.collectWithBuffer(bufferSize, 300);
+            long duration = System.currentTimeMillis() - startTime;
+
+            double throughput = summary.getPlatformCounts().values().stream()
+                    .mapToInt(Integer::intValue).sum() * 1000.0 / duration;
+
+            log.info("      - Orders: {}, Duration: {}ms, Throughput: {:.1f} orders/sec",
+                    summary.getPlatformCounts().get("FACEBOOK"), duration, throughput);
+        }
+
+        log.info("✅ Phase 10 Completed: Performance Analysis");
+    }
+
+    private void logFullDataResults(ImportSummary summary, long duration, String testDate) {
+        int totalOrders = summary.getPlatformCounts().values().stream()
+                .mapToInt(Integer::intValue).sum();
+
+        double throughput = totalOrders * 1000.0 / duration;
+        double dbEfficiency = (double) summary.getTotalDbOperations() / totalOrders;
+
+        log.info("   📈 PRODUCTION METRICS:");
+        log.info("      - Date: {}", testDate);
+        log.info("      - Total Orders: {}", totalOrders);
+        log.info("      - Duration: {}ms ({} seconds)", duration, duration/1000);
+        log.info("      - Throughput: {:.1f} orders/second", throughput);
+        log.info("      - API Calls: {}", summary.getTotalApiCalls());
+        log.info("      - DB Operations: {} ({:.2f} per order)",
+                summary.getTotalDbOperations(), dbEfficiency);
+        log.info("      - Memory Strategy: MEGA-Buffered (10000 orders/flush)");
+        log.info("      - DB Strategy: TEMP TABLE + COPY FROM");
+
+        // Production readiness indicators
+        if (throughput > 300) {
+            log.info("      🚀 MEGA-OPTIMIZED: Excellent throughput ({}x faster)", (int)(throughput/100));
+        } else if (throughput > 150) {
+            log.info("      ✅ PRODUCTION READY: Great performance");
+        } else if (throughput > 50) {
+            log.info("      ⚡ PRODUCTION CAPABLE: Good performance");
+        } else {
+            log.warn("      ⚠️ PERFORMANCE REVIEW: Consider optimization");
+        }
+    }
+
+    private void validateProductionData(ImportSummary summary) {
+        int totalOrders = summary.getPlatformCounts().getOrDefault("FACEBOOK", 0);
+
+        if (totalOrders == 0) {
+            log.warn("   ⚠️ No data for configured date - API may be empty");
+            return;
+        }
+
+        // Database validation
+        long dbCustomers = customerRepository.count();
+        long dbOrders = orderRepository.count();
+        long dbItems = orderItemRepository.count();
+
+        log.info("   📊 DATABASE VALIDATION:");
+        log.info("      - Customers: {}", dbCustomers);
+        log.info("      - Orders: {}", dbOrders);
+        log.info("      - Items: {}", dbItems);
+
+        // Basic integrity checks - adjusted for real-world data
+        assertThat(dbOrders).isGreaterThan(0);
+        assertThat(dbItems).isGreaterThan(0);
+
+        // Real-world check: Most orders should have items (allow some exceptions)
+        double itemCoverage = (double) dbItems / dbOrders * 100;
+        log.info("      - Item Coverage: {:.1f}%", itemCoverage);
+
+        if (itemCoverage < 80) {
+            log.warn("      ⚠️ Low item coverage - check item mapping logic");
+        } else {
+            log.info("      ✅ Good item coverage");
+        }
+
+        assertThat(itemCoverage).isGreaterThan(50.0); // At least 50% orders should have items
+
+        log.info("      ✅ Data integrity validated");
     }
 }

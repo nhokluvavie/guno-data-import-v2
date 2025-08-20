@@ -19,6 +19,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.*;
 
 /**
@@ -41,6 +43,13 @@ class FacebookIntegrationTestRunner {
     @Autowired private OrderRepository orderRepository;
     @Autowired private OrderItemRepository orderItemRepository;
     @Autowired private ProductRepository productRepository;
+    @Autowired private GeographyRepository geographyRepository;
+    @Autowired private PaymentRepository paymentRepository;
+    @Autowired private StatusRepository statusRepository;
+    @Autowired private ShippingRepository shippingRepository;
+    @Autowired private OrderStatusRepository orderStatusRepository;
+    @Autowired private OrderStatusDetailRepository orderStatusDetailRepository;
+    @Autowired private ProcessingDateRepository processingDateRepository;
 
     private static final String TEST_SESSION = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
             .format(LocalDateTime.now());
@@ -329,12 +338,15 @@ class FacebookIntegrationTestRunner {
 
         try {
             // Full data collection with MEGA-OPTIMIZED buffering
-            summary = bufferedDataCollector.collectWithBuffer(10000, 500);
+            summary = bufferedDataCollector.collectWithBuffer(configuredTestDate,10000, 500);
 
             long duration = System.currentTimeMillis() - startTime;
 
             // Performance Analysis
             logFullDataResults(summary, duration, configuredTestDate);
+
+            // Database insert breakdown for this run
+            logInsertBreakdown(summary, configuredTestDate);
 
             // Validation
             validateProductionData(summary);
@@ -359,7 +371,7 @@ class FacebookIntegrationTestRunner {
             log.info("   🧪 Testing buffer size: {}", bufferSize);
 
             long startTime = System.currentTimeMillis();
-            ImportSummary summary = bufferedDataCollector.collectWithBuffer(bufferSize, 300);
+            ImportSummary summary = bufferedDataCollector.collectWithBuffer(configuredTestDate, bufferSize, 300);
             long duration = System.currentTimeMillis() - startTime;
 
             double throughput = summary.getPlatformCounts().values().stream()
@@ -381,13 +393,16 @@ class FacebookIntegrationTestRunner {
 
         log.info("   📈 PRODUCTION METRICS:");
         log.info("      - Date: {}", testDate);
-        log.info("      - Total Orders: {}", totalOrders);
+        log.info("      - API Orders: {}", totalOrders);
         log.info("      - Duration: {}ms ({} seconds)", duration, duration/1000);
         log.info("      - Throughput: {:.1f} orders/second", throughput);
         log.info("      - API Calls: {}", summary.getTotalApiCalls());
         log.info("      - DB Operations: {} ({:.2f} per order)",
                 summary.getTotalDbOperations(), dbEfficiency);
         log.info("      - Memory Strategy: MEGA-Buffered (10000 orders/flush)");
+
+        // Database table breakdown
+        logInsertBreakdown(summary, testDate);
         log.info("      - DB Strategy: TEMP TABLE + COPY FROM");
 
         // Production readiness indicators
@@ -437,5 +452,34 @@ class FacebookIntegrationTestRunner {
         assertThat(itemCoverage).isGreaterThan(50.0); // At least 50% orders should have items
 
         log.info("      ✅ Data integrity validated");
+    }
+
+    private void logInsertBreakdown(ImportSummary summary, String testDate) {
+        log.info("   📊 INSERT BREAKDOWN for date {} (this run only):", testDate);
+
+        // Get breakdown from ImportSummary
+        Map<String, Integer> tableBreakdown = summary.getTableInsertCounts();
+        int apiOrders = summary.getPlatformCounts().getOrDefault("FACEBOOK", 0);
+
+        log.info("      - API returned: {} orders", apiOrders);
+        log.info("      - customers: {}", tableBreakdown.getOrDefault("customers", 0));
+        log.info("      - orders: {}", tableBreakdown.getOrDefault("orders", 0));
+        log.info("      - order_items: {}", tableBreakdown.getOrDefault("order_items", 0));
+        log.info("      - products: {}", tableBreakdown.getOrDefault("products", 0));
+        log.info("      - geography_info: {}", tableBreakdown.getOrDefault("geography_info", 0));
+        log.info("      - payment_info: {}", tableBreakdown.getOrDefault("payment_info", 0));
+        log.info("      - shipping_info: {}", tableBreakdown.getOrDefault("shipping_info", 0));
+        log.info("      - processing_date_info: {}", tableBreakdown.getOrDefault("processing_date_info", 0));
+        log.info("      - order_status: {}", tableBreakdown.getOrDefault("order_status", 0));
+        log.info("      - order_status_detail: {}", tableBreakdown.getOrDefault("order_status_detail", 0));
+        log.info("      - status: {}", tableBreakdown.getOrDefault("status", 0));
+
+        int totalInserted = tableBreakdown.values().stream().mapToInt(Integer::intValue).sum();
+        log.info("      - TOTAL INSERTED: {}", totalInserted);
+
+        if (apiOrders > 0) {
+            double insertRatio = (double) totalInserted / apiOrders;
+            log.info("      - INSERT EFFICIENCY: {:.1f} records per API order", insertRatio);
+        }
     }
 }

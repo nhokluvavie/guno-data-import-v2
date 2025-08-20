@@ -67,7 +67,7 @@ public class FacebookOrderDto {
     }
 
     public String getCreatedAt() {
-        return data != null ? data.getInsertedAt() : null;
+        return data != null ? data.getUpdateAt() : null;
     }
 
     public String getBillPhoneNumber() {
@@ -144,8 +144,8 @@ public class FacebookOrderDto {
         @JsonProperty("customer")
         private FacebookCustomer customer;
 
-        @JsonProperty("inserted_at")
-        private String insertedAt;
+        @JsonProperty("update_at")
+        private String updateAt;
 
         @JsonProperty("bill_phone_number")
         private String billPhoneNumber;

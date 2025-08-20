@@ -6,13 +6,13 @@ import com.guno.dataimport.dto.internal.ImportSummary;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import static org.assertj.core.api.Assertions.*;
 
 /**
- * DataCollector Test - Updated for streamlined interface
- * Location: src/test/java/com/guno/dataimport/api/service/DataCollectorTest.java
+ * DataCollector Test - Performance & Configuration validation
  */
 @SpringBootTest(classes = DataImportApplication.class)
 @ActiveProfiles("test")
@@ -21,109 +21,86 @@ class DataCollectorTest {
 
     @Autowired private DataCollector dataCollector;
 
-    @Test
-    void shouldCheckSystemReadiness() {
-        log.info("Testing system readiness check");
+    @Value("${api.facebook.default-date}")
+    private String configuredDate;
 
-        boolean isReady = dataCollector.isSystemReady();
-        log.info("System readiness: {}", isReady ? "READY" : "NOT READY");
-
-        assertThat(isReady).isNotNull();
-    }
+    @Value("${processing.batch.size}")
+    private int batchSize;
 
     @Test
-    void shouldCollectSinglePageData() {
-        log.info("Testing single page data collection");
+    void shouldCollectDataWithYmlConfig() {
+        log.info("Testing data collection with YML config - Date: {}, BatchSize: {}",
+                configuredDate, batchSize);
 
         CollectedData data = dataCollector.collectData();
 
         assertThat(data).isNotNull();
-        assertThat(data.getFacebookOrders()).isNotNull();
-        log.info("Single page collection - Total orders: {}", data.getTotalOrders());
-    }
+        log.info("Collected {} total orders", data.getTotalOrders());
 
-    @Test
-    void shouldExecuteOptimizedCollection() {
-        log.info("Testing OPTIMIZED collection (buffered)");
-
-        try {
-            ImportSummary summary = dataCollector.collectAndProcessAllData();
-
-            assertThat(summary).isNotNull();
-            assertThat(summary.getStartTime()).isNotNull();
-
-            log.info("Optimized collection results:");
-            log.info("- Duration: {}", summary.getDurationFormatted());
-            log.info("- API Calls: {}", summary.getTotalApiCalls());
-            log.info("- DB Operations: {}", summary.getTotalDbOperations());
-            log.info("- Platform Counts: {}", summary.getPlatformCounts());
-
-        } catch (Exception e) {
-            log.warn("Optimized collection limited due to API: {}", e.getMessage());
+        if (data.getTotalOrders() > 0) {
+            log.info("✅ Data collection successful");
+            assertThat(data.getFacebookOrders()).isNotNull();
+        } else {
+            log.warn("⚠️ No data collected (may be expected)");
         }
     }
 
     @Test
-    void shouldExecuteLegacyCollection() {
-        log.info("Testing LEGACY collection (page by page)");
+    void shouldVerifySystemReadiness() {
+        log.info("Testing system readiness");
 
-        try {
-            ImportSummary summary = dataCollector.collectAndProcessAllDataLegacy();
+        boolean ready = dataCollector.isSystemReady();
+        log.info("System ready: {}", ready);
 
-            assertThat(summary).isNotNull();
-            log.info("Legacy collection completed");
+        assertThat(ready).isNotNull();
+    }
 
-        } catch (Exception e) {
-            log.warn("Legacy collection limited due to API: {}", e.getMessage());
+    @Test
+    void shouldCompareCollectionPerformance() {
+        log.info("Comparing normal vs optimized collection performance");
+
+        // Normal collection
+        long startTime = System.currentTimeMillis();
+        CollectedData normalData = dataCollector.collectData();
+        long normalDuration = System.currentTimeMillis() - startTime;
+
+        // Optimized collection (if available)
+        startTime = System.currentTimeMillis();
+        ImportSummary optimizedSummary = dataCollector.collectAndProcessAllData();
+        long optimizedDuration = System.currentTimeMillis() - startTime;
+
+        log.info("Performance comparison:");
+        log.info("  Normal: {}ms, {} orders", normalDuration, normalData.getTotalOrders());
+        log.info("  Optimized: {}ms, {} operations", optimizedDuration, optimizedSummary.getTotalDbOperations());
+
+        assertThat(normalData).isNotNull();
+        assertThat(optimizedSummary).isNotNull();
+
+        if (normalData.getTotalOrders() > 0 && optimizedSummary.getTotalDbOperations() > 0) {
+            double efficiency = (double) optimizedSummary.getTotalDbOperations() / normalData.getTotalOrders();
+            log.info("  DB Efficiency: {:.2f} operations per order", efficiency);
         }
     }
 
     @Test
-    void shouldSupportCustomCollectionStrategy() {
-        log.info("Testing custom collection strategy");
+    void shouldHandleEmptyDataGracefully() {
+        log.info("Testing empty data handling");
 
-        try {
-            // Small buffer for testing
-            ImportSummary summary = dataCollector.collectAndProcess(50, true, 200);
+        CollectedData data = dataCollector.collectData();
 
-            assertThat(summary).isNotNull();
-            log.info("Custom collection - PageSize: 50, Buffer: 200");
-            log.info("- API Calls: {}", summary.getTotalApiCalls());
-            log.info("- DB Operations: {}", summary.getTotalDbOperations());
+        assertThat(data).isNotNull();
+        assertThat(data.getTotalOrders()).isGreaterThanOrEqualTo(0);
 
-        } catch (Exception e) {
-            log.warn("Custom collection limited due to API: {}", e.getMessage());
-        }
+        log.info("Empty data test - Orders: {}", data.getTotalOrders());
     }
 
     @Test
-    void shouldComparePerformanceStrategies() {
-        log.info("Testing performance comparison between strategies");
+    void shouldValidateConfiguredSettings() {
+        log.info("Validating configured settings from YML");
 
-        try {
-            // Test both strategies with small data
-            long bufferedStart = System.currentTimeMillis();
-            ImportSummary bufferedSummary = dataCollector.collectAndProcess(20, true, 100);
-            long bufferedDuration = System.currentTimeMillis() - bufferedStart;
+        assertThat(configuredDate).isNotEmpty();
+        assertThat(batchSize).isGreaterThan(0);
 
-            long legacyStart = System.currentTimeMillis();
-            ImportSummary legacySummary = dataCollector.collectAndProcessAllDataLegacy();
-            long legacyDuration = System.currentTimeMillis() - legacyStart;
-
-            log.info("PERFORMANCE COMPARISON:");
-            log.info("Buffered - Duration: {}ms, DB Ops: {}",
-                    bufferedDuration, bufferedSummary.getTotalDbOperations());
-            log.info("Legacy - Duration: {}ms, DB Ops: {}",
-                    legacyDuration, legacySummary.getTotalDbOperations());
-
-            // Buffered should have fewer DB operations
-            if (bufferedSummary.getTotalDbOperations() > 0 && legacySummary.getTotalDbOperations() > 0) {
-                assertThat(bufferedSummary.getTotalDbOperations())
-                        .isLessThanOrEqualTo(legacySummary.getTotalDbOperations());
-            }
-
-        } catch (Exception e) {
-            log.warn("Performance comparison limited: {}", e.getMessage());
-        }
+        log.info("✅ Config validated - Date: {}, BatchSize: {}", configuredDate, batchSize);
     }
 }

@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -71,7 +72,7 @@ public class BatchProcessor {
     /**
      * Process Facebook orders with temp table strategy
      */
-    private ProcessingResult processFacebookOrders(List<Object> facebookOrderObjects) {
+    public ProcessingResult processFacebookOrders(List<Object> facebookOrderObjects) {
         if (facebookOrderObjects == null || facebookOrderObjects.isEmpty()) {
             return ProcessingResult.builder().build();
         }
@@ -259,7 +260,7 @@ public class BatchProcessor {
             return ProcessingDateInfo.builder()
                     .orderId(order.getOrderId())
                     .dateKey(Long.valueOf(createdAt.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"))))
-                    .fullDate(createdAt)
+                    .fullDate(order.getCreatedAt().formatted(DateTimeFormatter.ofPattern("yyyy-MM-dd")))
                     .dayOfWeek(createdAt.getDayOfWeek().getValue())
                     .dayOfWeekName(createdAt.getDayOfWeek().name())
                     .dayOfMonth(createdAt.getDayOfMonth())

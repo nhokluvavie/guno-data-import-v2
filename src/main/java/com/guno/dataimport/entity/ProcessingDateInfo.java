@@ -17,7 +17,7 @@ public class ProcessingDateInfo {
 
     private String orderId;
     private Long dateKey;
-    private LocalDateTime fullDate;
+    private String fullDate;
 
     // Calendar information
     @Builder.Default private Integer dayOfWeek = 0;

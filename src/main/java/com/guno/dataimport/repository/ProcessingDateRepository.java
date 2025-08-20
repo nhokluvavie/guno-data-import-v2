@@ -13,6 +13,7 @@ import org.springframework.stereotype.Repository;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -158,7 +159,7 @@ public class ProcessingDateRepository {
     private String generateCsvData(List<ProcessingDateInfo> dateInfos) {
         return dateInfos.stream()
                 .map(dateInfo -> CsvFormatter.joinCsvRow(
-                        dateInfo.getOrderId(), dateInfo.getDateKey(), CsvFormatter.formatDateTime(dateInfo.getFullDate()),
+                        dateInfo.getOrderId(), dateInfo.getDateKey(), dateInfo.getFullDate(),
                         dateInfo.getDayOfWeek(), dateInfo.getDayOfWeekName(), dateInfo.getDayOfMonth(),
                         dateInfo.getDayOfYear(), dateInfo.getWeekOfYear(), dateInfo.getMonthOfYear(),
                         dateInfo.getMonthName(), dateInfo.getQuarterOfYear(), dateInfo.getQuarterName(),
@@ -192,7 +193,7 @@ public class ProcessingDateRepository {
                 .orderId(rs.getString("order_id"))
                 .dateKey(rs.getLong("date_key"))
                 .fullDate(rs.getTimestamp("full_date") != null ?
-                        rs.getTimestamp("full_date").toLocalDateTime() : null)
+                        rs.getTimestamp("full_date").toLocalDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : null)
                 .dayOfWeek(rs.getInt("day_of_week"))
                 .dayOfWeekName(rs.getString("day_of_week_name"))
                 .dayOfMonth(rs.getInt("day_of_month"))

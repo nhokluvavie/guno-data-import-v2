@@ -68,10 +68,7 @@ public class ImportScheduler {
      * Execute import process with pagination
      */
     private ImportSummary executeImport() {
-        ImportSummary summary = ImportSummary.builder()
-                .startTime(LocalDateTime.now())
-                .parallelMode(false)
-                .build();
+        ImportSummary summary = ImportSummary.createWithDefaultTables();
 
         try {
             // Step 1: Check system readiness
@@ -125,7 +122,7 @@ public class ImportScheduler {
         log.info("API Calls: {}", summary.getTotalApiCalls());
         log.info("DB Operations: {}", summary.getTotalDbOperations());
         log.info("Platform Data: {}", summary.getPlatformCounts());
-        log.info("Entity Counts: {}", summary.getEntityCounts());
+        log.info("Entity Counts: {}", summary.getTableInsertCounts());
         log.info("=========================");
     }
 }

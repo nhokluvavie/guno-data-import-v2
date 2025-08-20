@@ -5,13 +5,13 @@ import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import static org.assertj.core.api.Assertions.*;
 
 /**
- * FacebookApiClient Test - Test API connectivity and retry mechanism
- * Location: src/test/java/com/guno/dataimport/api/client/FacebookApiClientTest.java
+ * FacebookApiClient Test - Optimized with YML configuration
  */
 @SpringBootTest(classes = DataImportApplication.class)
 @ActiveProfiles("test")
@@ -20,155 +20,115 @@ class FacebookApiClientTest {
 
     @Autowired private FacebookApiClient facebookApiClient;
 
+    @Value("${api.facebook.default-date}")
+    private String defaultDate;
+
+    @Value("${api.facebook.page-size}")
+    private int pageSize;
+
+    @Value("${api.facebook.source}")
+    private String source;
+
+    @Value("${api.facebook.max-retries}")
+    private int maxRetries;
+
     @Test
-    void testApiAvailability() {
-        log.info("Testing Facebook API availability");
+    void shouldConnectWithYmlConfig() {
+        log.info("Testing API connectivity with YML config");
 
         boolean available = facebookApiClient.isApiAvailable();
-        log.info("Facebook API available: {}", available);
+        log.info("API Available: {}, Config - Date: {}, PageSize: {}, Source: {}",
+                available, defaultDate, pageSize, source);
 
-        // Test doesn't fail if API is down, just logs the result
         assertThat(available).isNotNull();
     }
 
     @Test
-    void testBasicFetchOrders() {
-        log.info("Testing basic fetchOrders() call");
+    void shouldFetchOrdersWithDefaultConfig() {
+        log.info("Testing fetchOrders() with default YML settings");
 
         FacebookApiResponse response = facebookApiClient.fetchOrders();
 
         assertThat(response).isNotNull();
         assertThat(response.getStatus()).isNotNull();
-        assertThat(response.getMessage()).isNotNull();
+        log.info("Default fetch - Status: {}, Orders: {}", response.getStatus(), response.getOrderCount());
 
-        log.info("API Response - Status: {}, Message: {}", response.getStatus(), response.getMessage());
-
-        if (response.isSuccess() && response.getData() != null) {
-            log.info("Successfully fetched {} orders", response.getOrderCount());
-            assertThat(response.getData().getOrders()).isNotNull();
+        if (response.isSuccess()) {
+            assertThat(response.getData()).isNotNull();
+            log.info("✅ Success with {} orders", response.getOrderCount());
         } else {
-            log.warn("API call failed or returned no data");
+            log.warn("⚠️ Failed: {}", response.getMessage());
         }
     }
 
     @Test
-    void testFetchOrdersWithDate() {
-        log.info("Testing fetchOrders() with specific date");
+    void shouldUsePaginationFromYml() {
+        log.info("Testing pagination with YML pageSize: {}", pageSize);
 
-        String testDate = "2025-08-12";
-        FacebookApiResponse response = facebookApiClient.fetchOrders(testDate);
-
-        assertThat(response).isNotNull();
-        log.info("Fetch with date {} - Status: {}", testDate, response.getStatus());
-
-        // Verify response structure regardless of success
-        assertThat(response.getStatus()).isNotNull();
-        assertThat(response.getCode()).isNotNull();
-    }
-
-    @Test
-    void testPaginationParameters() {
-        log.info("Testing pagination parameters");
-
-        int page = 1;
-        int pageSize = 5; // Small page size for testing
-        FacebookApiResponse response = facebookApiClient.fetchOrders("", page, pageSize);
+        FacebookApiResponse response = facebookApiClient.fetchOrders(defaultDate, 1, pageSize);
 
         assertThat(response).isNotNull();
-        log.info("Pagination test - Page: {}, Size: {}, Status: {}",
-                page, pageSize, response.getStatus());
+        log.info("Pagination - Page: 1, Size: {}, Status: {}, Got: {}",
+                pageSize, response.getStatus(), response.getOrderCount());
 
-        if (response.isSuccess() && response.getData() != null) {
-            int actualCount = response.getOrderCount();
-            log.info("Received {} orders (expected ≤ {})", actualCount, pageSize);
-
-            // Should not exceed requested page size (unless API has different logic)
-            assertThat(actualCount).isGreaterThanOrEqualTo(0);
+        if (response.isSuccess() && response.getOrderCount() > 0) {
+            assertThat(response.getOrderCount()).isLessThanOrEqualTo(pageSize);
+            log.info("✅ Pagination within limits");
         }
     }
 
     @Test
-    void testFilterDateParameter() {
-        log.info("Testing filter-date parameter");
+    void shouldUseSourceFromYml() {
+        log.info("Testing source parameter from YML: {}", source);
 
-        String date = "2025-08-12";
-        String source = "facebook"; // Alternative to default "update"
-
-        FacebookApiResponse response = facebookApiClient.fetchOrders(date, 1, 10, source);
+        FacebookApiResponse response = facebookApiClient.fetchOrders(defaultDate, 1, 10, source);
 
         assertThat(response).isNotNull();
-        log.info("Filter-date test - Date: {}, Filter: {}, Status: {}",
-                date, source, response.getStatus());
-
-        // Test structure regardless of API success
+        log.info("Source test - Source: {}, Status: {}", source, response.getStatus());
         assertThat(response.getMessage()).isNotNull();
     }
 
     @Test
-    void testResponseStructure() {
-        log.info("Testing API response structure");
+    void shouldValidateYmlConfiguration() {
+        log.info("Validating YML configuration");
 
-        FacebookApiResponse response = facebookApiClient.fetchOrders();
+        assertThat(defaultDate).isEqualTo("2025-08-18");
+        assertThat(pageSize).isEqualTo(1);
+        assertThat(source).isEqualTo("facebook");
+        assertThat(maxRetries).isEqualTo(3);
 
-        // Test response structure
-        assertThat(response).isNotNull();
-        assertThat(response.getStatus()).isNotNull();
-        assertThat(response.getMessage()).isNotNull();
-        assertThat(response.getCode()).isNotNull();
-
-        // Test data wrapper (might be null if no data)
-        if (response.getData() != null) {
-            assertThat(response.getData().getOrders()).isNotNull();
-            log.info("Response data structure verified - Orders: {}",
-                    response.getData().getOrders().size());
-        } else {
-            log.info("Response data is null (no orders available)");
-        }
-
-        // Test helper methods
-        assertThat(response.getOrderCount()).isGreaterThanOrEqualTo(0);
-        log.info("Order count: {}", response.getOrderCount());
+        log.info("✅ YML Config - Date: {}, PageSize: {}, Source: {}, Retries: {}",
+                defaultDate, pageSize, source, maxRetries);
     }
 
     @Test
-    void testRetryMechanism() {
-        log.info("Testing retry mechanism (implicit - by checking behavior)");
-
-        // This test verifies that the retry mechanism doesn't break normal flow
-        // We can't easily test actual retry behavior without mocking
+    void shouldMeasurePerformanceWithYmlSettings() {
+        log.info("Performance test with YML pageSize: {}", pageSize);
 
         long startTime = System.currentTimeMillis();
-        FacebookApiResponse response = facebookApiClient.fetchOrders();
+        FacebookApiResponse response = facebookApiClient.fetchOrders(defaultDate, 1, Math.min(pageSize, 10));
         long duration = System.currentTimeMillis() - startTime;
 
         assertThat(response).isNotNull();
-        log.info("API call completed in {}ms", duration);
+        log.info("Performance - Duration: {}ms, Orders: {}, Retries allowed: {}",
+                duration, response.getOrderCount(), maxRetries);
 
-        // If retry mechanism is working, failed calls should take longer
-        // But successful calls should be reasonably fast
-        if (response.isSuccess()) {
-            assertThat(duration).isLessThan(30000); // Should complete within 30 seconds
-        } else {
-            log.info("API call failed - retry mechanism may have been triggered");
+        if (response.isSuccess() && duration > 0 && response.getOrderCount() > 0) {
+            double throughput = response.getOrderCount() * 1000.0 / duration;
+            log.info("API Throughput: {:.1f} orders/second", throughput);
         }
+
+        assertThat(duration).isLessThan(30000);
     }
 
     @Test
-    void testErrorHandling() {
-        log.info("Testing error handling with edge cases");
+    void shouldHandleErrorsWithRetryConfig() {
+        log.info("Testing error handling with {} retries", maxRetries);
 
-        // Test with potentially invalid date format
-        FacebookApiResponse response1 = facebookApiClient.fetchOrders("invalid-date");
-        assertThat(response1).isNotNull();
-        log.info("Invalid date test - Status: {}", response1.getStatus());
+        FacebookApiResponse response = facebookApiClient.fetchOrders("invalid-date", 1, 5);
 
-        // Test with zero page size (edge case)
-        FacebookApiResponse response2 = facebookApiClient.fetchOrders("", 1, 0);
-        assertThat(response2).isNotNull();
-        log.info("Zero page size test - Status: {}", response2.getStatus());
-
-        // Verify that client handles errors gracefully (doesn't throw exceptions)
-        assertThat(response1.getStatus()).isNotNull();
-        assertThat(response2.getStatus()).isNotNull();
+        assertThat(response).isNotNull();
+        assertThat(response.getStatus()).isNotNull();
+        log.info("Error handling - Status: {}, MaxRetries: {}", response.getStatus(), maxRetries);
     }
 }

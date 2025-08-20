@@ -99,7 +99,7 @@ class FacebookMapperTest {
         assertThat(items).isNotEmpty();
         assertThat(items.get(0).getOrderId()).isEqualTo(order.getOrderId());
 
-        orderItemRepository.bulkInsert(items);
+        orderItemRepository.bulkUpsert(items);
         log.info("✓ OrderItems mapped and saved: {} items", items.size());
     }
 

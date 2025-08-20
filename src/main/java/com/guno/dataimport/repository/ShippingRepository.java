@@ -65,11 +65,11 @@ public class ShippingRepository {
      */
     public int bulkUpsert(List<ShippingInfo> shippingInfos) {
         if (shippingInfos == null || shippingInfos.isEmpty()) return 0;
-
         try {
-            return bulkUpsertWithPreDelete(shippingInfos);
+            return tempTableUpsert(shippingInfos, "tbl_shipping_info",
+                    "order_id", "provider_name = EXCLUDED.provider_name, base_fee = EXCLUDED.base_fee");
         } catch (Exception e) {
-            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            log.warn("Temp table failed, using batch: {}", e.getMessage());
             return executeBatchUpsert(shippingInfos);
         }
     }
@@ -107,13 +107,6 @@ public class ShippingRepository {
         });
     }
 
-    private int bulkUpsertWithPreDelete(List<ShippingInfo> shippingInfos) throws Exception {
-        Set<String> orderIds = shippingInfos.stream()
-                .map(ShippingInfo::getOrderId).collect(Collectors.toSet());
-        deleteByOrderIds(orderIds);
-        return bulkInsertWithCopy(shippingInfos);
-    }
-
     // Update existing deleteByOrderIds method
     public int deleteByOrderIds(Set<String> orderIds) {
         if (orderIds.isEmpty()) return 0;
@@ -133,6 +126,38 @@ public class ShippingRepository {
             totalDeleted += jdbcTemplate.update(sql, batch.toArray());
         }
         return totalDeleted;
+    }
+
+    private <T> int tempTableUpsert(List<ShippingInfo> entities, String tableName, String conflictColumns, String updateSet) throws Exception {
+        String tempTable = "temp_" + tableName.substring(4) + "_" + System.currentTimeMillis();
+
+        try {
+            // Create temp table
+            jdbcTemplate.execute("CREATE TEMP TABLE " + tempTable + " (LIKE " + tableName + " INCLUDING DEFAULTS)");
+
+            // COPY INTO temp table
+            String tempCopySQL = COPY_SQL.replace(tableName, tempTable);
+            String csvData = generateCsvData(entities);
+
+            jdbcTemplate.execute((Connection conn) -> {
+                CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+                try (StringReader reader = new StringReader(csvData)) {
+                    return (int) copyManager.copyIn(tempCopySQL, reader);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            // MERGE to main table
+            String mergeSQL = String.format(
+                    "INSERT INTO %s SELECT * FROM %s ON CONFLICT (%s) DO UPDATE SET %s",
+                    tableName, tempTable, conflictColumns, updateSet);
+
+            return jdbcTemplate.update(mergeSQL);
+
+        } finally {
+            jdbcTemplate.execute("DROP TABLE IF EXISTS " + tempTable);
+        }
     }
 
     private String generateCsvData(List<ShippingInfo> shippingInfos) {

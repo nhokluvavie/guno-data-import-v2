@@ -48,34 +48,14 @@ public class OrderItemRepository {
     /**
      * OPTIMIZED: Bulk insert with COPY FROM
      */
-    public int bulkInsert(List<OrderItem> orderItems) {
+    public int bulkUpsert(List<OrderItem> orderItems) {
         if (orderItems == null || orderItems.isEmpty()) return 0;
-
         try {
-            return bulkUpsertWithPreDelete(orderItems);
+            return tempTableUpsert(orderItems, "tbl_order_item",
+                    "order_id, sku, platform_product_id", "quantity = EXCLUDED.quantity, total_price = EXCLUDED.total_price");
         } catch (Exception e) {
-            log.warn("COPY FROM failed, using batch insert: {}", e.getMessage());
+            log.warn("Temp table failed, using batch: {}", e.getMessage());
             return executeBatchInsert(orderItems);
-        }
-    }
-
-    /**
-     * OPTIMIZED: Bulk refresh with COPY FROM
-     */
-    public int bulkRefresh(Set<String> orderIds, List<OrderItem> newOrderItems) {
-        if (orderIds == null || orderIds.isEmpty()) {
-            return bulkInsert(newOrderItems);
-        }
-
-        log.info("Refreshing order items for {} orders with {} new items",
-                orderIds.size(), newOrderItems != null ? newOrderItems.size() : 0);
-
-        try {
-            deleteByOrderIds(orderIds);
-            return bulkInsert(newOrderItems);
-        } catch (Exception e) {
-            log.error("Bulk refresh failed: {}", e.getMessage());
-            throw new RuntimeException("Failed to refresh order items", e);
         }
     }
 
@@ -102,7 +82,7 @@ public class OrderItemRepository {
 
     // === COPY FROM Implementation ===
 
-    private int bulkInsertWithCopy(List<OrderItem> orderItems) throws Exception {
+    public int bulkInsertWithCopy(List<OrderItem> orderItems) throws Exception {
         log.info("Bulk inserting {} order items using COPY FROM", orderItems.size());
 
         String csvData = generateCsvData(orderItems);
@@ -114,13 +94,6 @@ public class OrderItemRepository {
                 throw new RuntimeException(e);
             }
         });
-    }
-
-    private int bulkUpsertWithPreDelete(List<OrderItem> orderItems) throws Exception {
-        Set<String> orderIds = orderItems.stream()
-                .map(OrderItem::getOrderId).collect(Collectors.toSet());
-        deleteByOrderIds(orderIds);
-        return bulkInsertWithCopy(orderItems);
     }
 
     // Update existing deleteByOrderIds method
@@ -142,6 +115,38 @@ public class OrderItemRepository {
             totalDeleted += jdbcTemplate.update(sql, batch.toArray());
         }
         return totalDeleted;
+    }
+
+    private <T> int tempTableUpsert(List<OrderItem> entities, String tableName, String conflictColumns, String updateSet) throws Exception {
+        String tempTable = "temp_" + tableName.substring(4) + "_" + System.currentTimeMillis();
+
+        try {
+            // Create temp table
+            jdbcTemplate.execute("CREATE TEMP TABLE " + tempTable + " (LIKE " + tableName + " INCLUDING DEFAULTS)");
+
+            // COPY INTO temp table
+            String tempCopySQL = COPY_SQL.replace(tableName, tempTable);
+            String csvData = generateCsvData(entities);
+
+            jdbcTemplate.execute((Connection conn) -> {
+                CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+                try (StringReader reader = new StringReader(csvData)) {
+                    return (int) copyManager.copyIn(tempCopySQL, reader);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            // MERGE to main table
+            String mergeSQL = String.format(
+                    "INSERT INTO %s SELECT * FROM %s ON CONFLICT (%s) DO UPDATE SET %s",
+                    tableName, tempTable, conflictColumns, updateSet);
+
+            return jdbcTemplate.update(mergeSQL);
+
+        } finally {
+            jdbcTemplate.execute("DROP TABLE IF EXISTS " + tempTable);
+        }
     }
 
     private String generateCsvData(List<OrderItem> orderItems) {

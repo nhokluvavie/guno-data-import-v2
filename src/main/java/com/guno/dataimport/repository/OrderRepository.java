@@ -70,11 +70,11 @@ public class OrderRepository {
      */
     public int bulkUpsert(List<Order> orders) {
         if (orders == null || orders.isEmpty()) return 0;
-
         try {
-            return bulkUpsertWithPreDelete(orders);
+            return tempTableUpsert(orders, "tbl_order",
+                    "order_id", "gross_revenue = EXCLUDED.gross_revenue, is_delivered = EXCLUDED.is_delivered");
         } catch (Exception e) {
-            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            log.warn("Temp table failed, using batch: {}", e.getMessage());
             return executeBatchUpsert(orders);
         }
     }
@@ -106,7 +106,7 @@ public class OrderRepository {
 
     // === COPY FROM Implementation ===
 
-    private int bulkInsertWithCopy(List<Order> orders) throws Exception {
+    public int bulkInsertWithCopy(List<Order> orders) throws Exception {
         log.info("Bulk inserting {} orders using COPY FROM", orders.size());
 
         String csvData = generateCsvData(orders);
@@ -120,14 +120,7 @@ public class OrderRepository {
         });
     }
 
-    private int bulkUpsertWithPreDelete(List<Order> orders) throws Exception {
-        Set<String> orderIds = orders.stream()
-                .map(Order::getOrderId).collect(Collectors.toSet());
-        deleteByIds(orderIds);
-        return bulkInsertWithCopy(orders);
-    }
-
-    private int deleteByIds(Set<String> orderIds) {
+    public int deleteByIds(Set<String> orderIds) {
         if (orderIds.isEmpty()) return 0;
 
         if (orderIds.size() <= 1000) {
@@ -145,6 +138,38 @@ public class OrderRepository {
             totalDeleted += jdbcTemplate.update(sql, batch.toArray());
         }
         return totalDeleted;
+    }
+
+    private <T> int tempTableUpsert(List<Order> entities, String tableName, String conflictColumns, String updateSet) throws Exception {
+        String tempTable = "temp_" + tableName.substring(4) + "_" + System.currentTimeMillis();
+
+        try {
+            // Create temp table
+            jdbcTemplate.execute("CREATE TEMP TABLE " + tempTable + " (LIKE " + tableName + " INCLUDING DEFAULTS)");
+
+            // COPY INTO temp table
+            String tempCopySQL = COPY_SQL.replace(tableName, tempTable);
+            String csvData = generateCsvData(entities);
+
+            jdbcTemplate.execute((Connection conn) -> {
+                CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+                try (StringReader reader = new StringReader(csvData)) {
+                    return (int) copyManager.copyIn(tempCopySQL, reader);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            // MERGE to main table
+            String mergeSQL = String.format(
+                    "INSERT INTO %s SELECT * FROM %s ON CONFLICT (%s) DO UPDATE SET %s",
+                    tableName, tempTable, conflictColumns, updateSet);
+
+            return jdbcTemplate.update(mergeSQL);
+
+        } finally {
+            jdbcTemplate.execute("DROP TABLE IF EXISTS " + tempTable);
+        }
     }
 
     private String generateCsvData(List<Order> orders) {
@@ -170,7 +195,7 @@ public class OrderRepository {
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
 
-    private int executeBatchUpsert(List<Order> orders) {
+    public int executeBatchUpsert(List<Order> orders) {
         log.info("Batch upserting {} orders", orders.size());
         return jdbcTemplate.batchUpdate(UPSERT_SQL, orders.stream()
                 .map(this::mapToParams).toList()).length;

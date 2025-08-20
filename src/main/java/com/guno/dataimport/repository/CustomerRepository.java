@@ -63,12 +63,11 @@ public class CustomerRepository {
      */
     public int bulkUpsert(List<Customer> customers) {
         if (customers == null || customers.isEmpty()) return 0;
-
-        // Try COPY FROM first for performance
         try {
-            return bulkUpsertWithPreDelete(customers);
+            return tempTableUpsert(customers, "tbl_customer",
+                    "customer_id", "platform_customer_id = EXCLUDED.platform_customer_id, total_orders = EXCLUDED.total_orders");
         } catch (Exception e) {
-            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            log.warn("Temp table failed, using batch: {}", e.getMessage());
             return executeBatchUpsert(customers);
         }
     }
@@ -95,7 +94,7 @@ public class CustomerRepository {
 
     // === COPY FROM Implementation ===
 
-    private int bulkInsertWithCopy(List<Customer> customers) throws Exception {
+    public int bulkInsertWithCopy(List<Customer> customers) throws Exception {
         log.info("Bulk inserting {} customers using COPY FROM", customers.size());
 
         String csvData = generateCsvData(customers);
@@ -109,14 +108,7 @@ public class CustomerRepository {
         });
     }
 
-    private int bulkUpsertWithPreDelete(List<Customer> customers) throws Exception {
-        Set<String> customerIds = customers.stream()
-                .map(Customer::getCustomerId).collect(Collectors.toSet());
-        deleteByIds(customerIds);
-        return bulkInsertWithCopy(customers);
-    }
-
-    private int deleteByIds(Set<String> customerIds) {
+    public int deleteByIds(Set<String> customerIds) {
         if (customerIds.isEmpty()) return 0;
 
         if (customerIds.size() <= 1000) {
@@ -135,6 +127,38 @@ public class CustomerRepository {
             totalDeleted += jdbcTemplate.update(sql, batch.toArray());
         }
         return totalDeleted;
+    }
+
+    private <T> int tempTableUpsert(List<Customer> entities, String tableName, String conflictColumns, String updateSet) throws Exception {
+        String tempTable = "temp_" + tableName.substring(4) + "_" + System.currentTimeMillis();
+
+        try {
+            // Create temp table
+            jdbcTemplate.execute("CREATE TEMP TABLE " + tempTable + " (LIKE " + tableName + " INCLUDING DEFAULTS)");
+
+            // COPY INTO temp table
+            String tempCopySQL = COPY_SQL.replace(tableName, tempTable);
+            String csvData = generateCsvData(entities);
+
+            jdbcTemplate.execute((Connection conn) -> {
+                CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+                try (StringReader reader = new StringReader(csvData)) {
+                    return (int) copyManager.copyIn(tempCopySQL, reader);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            // MERGE to main table
+            String mergeSQL = String.format(
+                    "INSERT INTO %s SELECT * FROM %s ON CONFLICT (%s) DO UPDATE SET %s",
+                    tableName, tempTable, conflictColumns, updateSet);
+
+            return jdbcTemplate.update(mergeSQL);
+
+        } finally {
+            jdbcTemplate.execute("DROP TABLE IF EXISTS " + tempTable);
+        }
     }
 
     private String generateCsvData(List<Customer> customers) {
@@ -156,7 +180,7 @@ public class CustomerRepository {
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
 
-    private int executeBatchUpsert(List<Customer> customers) {
+    public int executeBatchUpsert(List<Customer> customers) {
         log.info("Batch upserting {} customers", customers.size());
         return jdbcTemplate.batchUpdate(UPSERT_SQL, customers.stream()
                 .map(this::mapToParams).toList()).length;

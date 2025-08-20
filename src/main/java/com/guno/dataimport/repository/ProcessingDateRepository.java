@@ -60,11 +60,11 @@ public class ProcessingDateRepository {
      */
     public int bulkUpsert(List<ProcessingDateInfo> dateInfos) {
         if (dateInfos == null || dateInfos.isEmpty()) return 0;
-
         try {
-            return bulkUpsertWithPreDelete(dateInfos);
+            return tempTableUpsert(dateInfos, "tbl_processing_date_info",
+                    "order_id", "full_date = EXCLUDED.full_date, is_weekend = EXCLUDED.is_weekend");
         } catch (Exception e) {
-            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            log.warn("Temp table failed, using batch: {}", e.getMessage());
             return executeBatchUpsert(dateInfos);
         }
     }
@@ -88,7 +88,7 @@ public class ProcessingDateRepository {
 
     // === COPY FROM Implementation ===
 
-    private int bulkInsertWithCopy(List<ProcessingDateInfo> dateInfos) throws Exception {
+    public int bulkInsertWithCopy(List<ProcessingDateInfo> dateInfos) throws Exception {
         log.info("Bulk inserting {} processing date records using COPY FROM", dateInfos.size());
 
         String csvData = generateCsvData(dateInfos);
@@ -100,13 +100,6 @@ public class ProcessingDateRepository {
                 throw new RuntimeException(e);
             }
         });
-    }
-
-    private int bulkUpsertWithPreDelete(List<ProcessingDateInfo> dateInfos) throws Exception {
-        Set<String> orderIds = dateInfos.stream()
-                .map(ProcessingDateInfo::getOrderId).collect(Collectors.toSet());
-        deleteByOrderIds(orderIds);
-        return bulkInsertWithCopy(dateInfos);
     }
 
     // Update existing deleteByOrderIds method
@@ -128,6 +121,38 @@ public class ProcessingDateRepository {
             totalDeleted += jdbcTemplate.update(sql, batch.toArray());
         }
         return totalDeleted;
+    }
+
+    private <T> int tempTableUpsert(List<ProcessingDateInfo> entities, String tableName, String conflictColumns, String updateSet) throws Exception {
+        String tempTable = "temp_" + tableName.substring(4) + "_" + System.currentTimeMillis();
+
+        try {
+            // Create temp table
+            jdbcTemplate.execute("CREATE TEMP TABLE " + tempTable + " (LIKE " + tableName + " INCLUDING DEFAULTS)");
+
+            // COPY INTO temp table
+            String tempCopySQL = COPY_SQL.replace(tableName, tempTable);
+            String csvData = generateCsvData(entities);
+
+            jdbcTemplate.execute((Connection conn) -> {
+                CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+                try (StringReader reader = new StringReader(csvData)) {
+                    return (int) copyManager.copyIn(tempCopySQL, reader);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            // MERGE to main table
+            String mergeSQL = String.format(
+                    "INSERT INTO %s SELECT * FROM %s ON CONFLICT (%s) DO UPDATE SET %s",
+                    tableName, tempTable, conflictColumns, updateSet);
+
+            return jdbcTemplate.update(mergeSQL);
+
+        } finally {
+            jdbcTemplate.execute("DROP TABLE IF EXISTS " + tempTable);
+        }
     }
 
     private String generateCsvData(List<ProcessingDateInfo> dateInfos) {

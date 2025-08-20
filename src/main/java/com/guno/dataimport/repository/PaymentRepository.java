@@ -62,11 +62,11 @@ public class PaymentRepository {
      */
     public int bulkUpsert(List<PaymentInfo> paymentInfos) {
         if (paymentInfos == null || paymentInfos.isEmpty()) return 0;
-
         try {
-            return bulkUpsertWithPreDelete(paymentInfos);
+            return tempTableUpsert(paymentInfos, "tbl_payment_info",
+                    "order_id", "payment_method = EXCLUDED.payment_method, is_cod = EXCLUDED.is_cod");
         } catch (Exception e) {
-            log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
+            log.warn("Temp table failed, using batch: {}", e.getMessage());
             return executeBatchUpsert(paymentInfos);
         }
     }
@@ -90,7 +90,7 @@ public class PaymentRepository {
 
     // === COPY FROM Implementation ===
 
-    private int bulkInsertWithCopy(List<PaymentInfo> paymentInfos) throws Exception {
+    public int bulkInsertWithCopy(List<PaymentInfo> paymentInfos) throws Exception {
         log.info("Bulk inserting {} payment records using COPY FROM", paymentInfos.size());
 
         String csvData = generateCsvData(paymentInfos);
@@ -102,13 +102,6 @@ public class PaymentRepository {
                 throw new RuntimeException(e);
             }
         });
-    }
-
-    private int bulkUpsertWithPreDelete(List<PaymentInfo> paymentInfos) throws Exception {
-        Set<String> orderIds = paymentInfos.stream()
-                .map(PaymentInfo::getOrderId).collect(Collectors.toSet());
-        deleteByOrderIds(orderIds);
-        return bulkInsertWithCopy(paymentInfos);
     }
 
     // Update existing deleteByOrderIds method
@@ -130,6 +123,38 @@ public class PaymentRepository {
             totalDeleted += jdbcTemplate.update(sql, batch.toArray());
         }
         return totalDeleted;
+    }
+
+    private <T> int tempTableUpsert(List<PaymentInfo> entities, String tableName, String conflictColumns, String updateSet) throws Exception {
+        String tempTable = "temp_" + tableName.substring(4) + "_" + System.currentTimeMillis();
+
+        try {
+            // Create temp table
+            jdbcTemplate.execute("CREATE TEMP TABLE " + tempTable + " (LIKE " + tableName + " INCLUDING DEFAULTS)");
+
+            // COPY INTO temp table
+            String tempCopySQL = COPY_SQL.replace(tableName, tempTable);
+            String csvData = generateCsvData(entities);
+
+            jdbcTemplate.execute((Connection conn) -> {
+                CopyManager copyManager = new CopyManager((BaseConnection) conn.unwrap(BaseConnection.class));
+                try (StringReader reader = new StringReader(csvData)) {
+                    return (int) copyManager.copyIn(tempCopySQL, reader);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            // MERGE to main table
+            String mergeSQL = String.format(
+                    "INSERT INTO %s SELECT * FROM %s ON CONFLICT (%s) DO UPDATE SET %s",
+                    tableName, tempTable, conflictColumns, updateSet);
+
+            return jdbcTemplate.update(mergeSQL);
+
+        } finally {
+            jdbcTemplate.execute("DROP TABLE IF EXISTS " + tempTable);
+        }
     }
 
     private String generateCsvData(List<PaymentInfo> paymentInfos) {

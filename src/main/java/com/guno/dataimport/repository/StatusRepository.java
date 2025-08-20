@@ -13,9 +13,8 @@ import org.springframework.stereotype.Repository;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Status Repository - JDBC operations with COPY FROM optimization (Master table)
@@ -53,7 +52,7 @@ public class StatusRepository {
         if (statuses == null || statuses.isEmpty()) return 0;
 
         try {
-            return bulkInsertWithCopy(statuses);
+            return bulkUpsertWithPreDelete(statuses);
         } catch (Exception e) {
             log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
             return executeBatchUpsert(statuses);
@@ -107,6 +106,33 @@ public class StatusRepository {
                 throw new RuntimeException(e);
             }
         });
+    }
+
+    private int bulkUpsertWithPreDelete(List<Status> statuses) throws Exception {
+        Set<Long> statusKeys = statuses.stream()
+                .map(Status::getStatusKey).collect(Collectors.toSet());
+        deleteByKeys(statusKeys);
+        return bulkInsertWithCopy(statuses);
+    }
+
+    private int deleteByKeys(Set<Long> statusKeys) {
+        if (statusKeys.isEmpty()) return 0;
+
+        if (statusKeys.size() <= 1000) {
+            String placeholders = String.join(",", Collections.nCopies(statusKeys.size(), "?"));
+            String sql = "DELETE FROM tbl_status WHERE status_key IN (" + placeholders + ")";
+            return jdbcTemplate.update(sql, statusKeys.toArray());
+        }
+
+        List<Long> keyList = new ArrayList<>(statusKeys);
+        int totalDeleted = 0;
+        for (int i = 0; i < keyList.size(); i += 1000) {
+            List<Long> batch = keyList.subList(i, Math.min(i + 1000, keyList.size()));
+            String placeholders = String.join(",", Collections.nCopies(batch.size(), "?"));
+            String sql = "DELETE FROM tbl_status WHERE status_key IN (" + placeholders + ")";
+            totalDeleted += jdbcTemplate.update(sql, batch.toArray());
+        }
+        return totalDeleted;
     }
 
     private String generateCsvData(List<Status> statuses) {

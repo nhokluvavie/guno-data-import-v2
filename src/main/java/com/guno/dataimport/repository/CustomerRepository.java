@@ -13,9 +13,8 @@ import org.springframework.stereotype.Repository;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Customer Repository - JDBC operations with COPY FROM optimization
@@ -67,7 +66,7 @@ public class CustomerRepository {
 
         // Try COPY FROM first for performance
         try {
-            return bulkInsertWithCopy(customers);
+            return bulkUpsertWithPreDelete(customers);
         } catch (Exception e) {
             log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
             return executeBatchUpsert(customers);
@@ -108,6 +107,34 @@ public class CustomerRepository {
                 throw new RuntimeException(e);
             }
         });
+    }
+
+    private int bulkUpsertWithPreDelete(List<Customer> customers) throws Exception {
+        Set<String> customerIds = customers.stream()
+                .map(Customer::getCustomerId).collect(Collectors.toSet());
+        deleteByIds(customerIds);
+        return bulkInsertWithCopy(customers);
+    }
+
+    private int deleteByIds(Set<String> customerIds) {
+        if (customerIds.isEmpty()) return 0;
+
+        if (customerIds.size() <= 1000) {
+            String placeholders = String.join(",", Collections.nCopies(customerIds.size(), "?"));
+            String sql = "DELETE FROM tbl_customer WHERE customer_id IN (" + placeholders + ")";
+            return jdbcTemplate.update(sql, customerIds.toArray());
+        }
+
+        // Batch processing for large sets
+        List<String> idList = new ArrayList<>(customerIds);
+        int totalDeleted = 0;
+        for (int i = 0; i < idList.size(); i += 1000) {
+            List<String> batch = idList.subList(i, Math.min(i + 1000, idList.size()));
+            String placeholders = String.join(",", Collections.nCopies(batch.size(), "?"));
+            String sql = "DELETE FROM tbl_customer WHERE customer_id IN (" + placeholders + ")";
+            totalDeleted += jdbcTemplate.update(sql, batch.toArray());
+        }
+        return totalDeleted;
     }
 
     private String generateCsvData(List<Customer> customers) {

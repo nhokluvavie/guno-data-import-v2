@@ -13,9 +13,11 @@ import org.springframework.stereotype.Repository;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Product Repository - JDBC operations with COPY FROM optimization
@@ -63,7 +65,7 @@ public class ProductRepository {
         if (products == null || products.isEmpty()) return 0;
 
         try {
-            return bulkInsertWithCopy(products);
+            return bulkUpsertWithPreDelete(products);
         } catch (Exception e) {
             log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
             return executeBatchUpsert(products);
@@ -125,6 +127,46 @@ public class ProductRepository {
                 throw new RuntimeException(e);
             }
         });
+    }
+
+    private int bulkUpsertWithPreDelete(List<Product> products) throws Exception {
+        Set<String> compositeKeys = products.stream()
+                .map(p -> p.getSku() + "|||" + p.getPlatformProductId())
+                .collect(Collectors.toSet());
+        deleteByCompositeKeys(compositeKeys);
+        return bulkInsertWithCopy(products);
+    }
+
+    private int deleteByCompositeKeys(Set<String> compositeKeys) {
+        if (compositeKeys.isEmpty()) return 0;
+
+        if (compositeKeys.size() <= 500) {
+            return deleteCompositeKeysBatch(new ArrayList<>(compositeKeys));
+        }
+
+        List<String> keyList = new ArrayList<>(compositeKeys);
+        int totalDeleted = 0;
+        for (int i = 0; i < keyList.size(); i += 500) {
+            List<String> batch = keyList.subList(i, Math.min(i + 500, keyList.size()));
+            totalDeleted += deleteCompositeKeysBatch(batch);
+        }
+        return totalDeleted;
+    }
+
+    private int deleteCompositeKeysBatch(List<String> compositeKeys) {
+        StringBuilder sql = new StringBuilder("DELETE FROM tbl_product WHERE ");
+        List<Object> params = new ArrayList<>();
+
+        for (int i = 0; i < compositeKeys.size(); i++) {
+            String[] parts = compositeKeys.get(i).split("\\|\\|\\|", 2);
+            if (parts.length == 2) {
+                if (i > 0) sql.append(" OR ");
+                sql.append("(sku = ? AND platform_product_id = ?)");
+                params.add(parts[0]);
+                params.add(parts[1]);
+            }
+        }
+        return jdbcTemplate.update(sql.toString(), params.toArray());
     }
 
     private String generateCsvData(List<Product> products) {

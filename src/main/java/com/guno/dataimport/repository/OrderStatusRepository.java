@@ -13,8 +13,11 @@ import org.springframework.stereotype.Repository;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * OrderStatus Repository - JDBC operations with COPY FROM optimization
@@ -57,7 +60,7 @@ public class OrderStatusRepository {
         if (orderStatuses == null || orderStatuses.isEmpty()) return 0;
 
         try {
-            return bulkInsertWithCopy(orderStatuses);
+            return bulkUpsertWithPreDelete(orderStatuses);
         } catch (Exception e) {
             log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
             return executeBatchUpsert(orderStatuses);
@@ -93,13 +96,6 @@ public class OrderStatusRepository {
         return results.isEmpty() ? null : results.get(0);
     }
 
-    public int deleteByOrderIds(Set<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) return 0;
-
-        String sql = "DELETE FROM tbl_order_status WHERE order_id = ANY(?)";
-        return jdbcTemplate.update(sql, orderIds.toArray(new String[0]));
-    }
-
     public long count() {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tbl_order_status", Long.class);
     }
@@ -123,6 +119,67 @@ public class OrderStatusRepository {
                 throw new RuntimeException(e);
             }
         });
+    }
+
+    private int bulkUpsertWithPreDelete(List<OrderStatus> orderStatuses) throws Exception {
+        Set<String> compositeKeys = orderStatuses.stream()
+                .map(s -> s.getStatusKey() + "|||" + s.getOrderId())
+                .collect(Collectors.toSet());
+        deleteByCompositeKeys(compositeKeys);
+        return bulkInsertWithCopy(orderStatuses);
+    }
+
+    private int deleteByCompositeKeys(Set<String> compositeKeys) {
+        if (compositeKeys.isEmpty()) return 0;
+
+        if (compositeKeys.size() <= 500) {
+            return deleteCompositeKeysBatch(new ArrayList<>(compositeKeys));
+        }
+
+        List<String> keyList = new ArrayList<>(compositeKeys);
+        int totalDeleted = 0;
+        for (int i = 0; i < keyList.size(); i += 500) {
+            List<String> batch = keyList.subList(i, Math.min(i + 500, keyList.size()));
+            totalDeleted += deleteCompositeKeysBatch(batch);
+        }
+        return totalDeleted;
+    }
+
+    private int deleteCompositeKeysBatch(List<String> compositeKeys) {
+        StringBuilder sql = new StringBuilder("DELETE FROM tbl_order_status WHERE ");
+        List<Object> params = new ArrayList<>();
+
+        for (int i = 0; i < compositeKeys.size(); i++) {
+            String[] parts = compositeKeys.get(i).split("\\|\\|\\|", 2);
+            if (parts.length == 2) {
+                if (i > 0) sql.append(" OR ");
+                sql.append("(status_key = ? AND order_id = ?)");
+                params.add(Long.valueOf(parts[0]));
+                params.add(parts[1]);
+            }
+        }
+        return jdbcTemplate.update(sql.toString(), params.toArray());
+    }
+
+    // Update existing deleteByOrderIds method
+    public int deleteByOrderIds(Set<String> orderIds) {
+        if (orderIds.isEmpty()) return 0;
+
+        if (orderIds.size() <= 1000) {
+            String placeholders = String.join(",", Collections.nCopies(orderIds.size(), "?"));
+            String sql = "DELETE FROM tbl_order_status WHERE order_id IN (" + placeholders + ")";
+            return jdbcTemplate.update(sql, orderIds.toArray());
+        }
+
+        List<String> idList = new ArrayList<>(orderIds);
+        int totalDeleted = 0;
+        for (int i = 0; i < idList.size(); i += 1000) {
+            List<String> batch = idList.subList(i, Math.min(i + 1000, idList.size()));
+            String placeholders = String.join(",", Collections.nCopies(batch.size(), "?"));
+            String sql = "DELETE FROM tbl_order_status WHERE order_id IN (" + placeholders + ")";
+            totalDeleted += jdbcTemplate.update(sql, batch.toArray());
+        }
+        return totalDeleted;
     }
 
     private String generateCsvData(List<OrderStatus> orderStatuses) {

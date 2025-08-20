@@ -13,8 +13,11 @@ import org.springframework.stereotype.Repository;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * OrderItem Repository - JDBC operations with optimized COPY FROM
@@ -49,7 +52,7 @@ public class OrderItemRepository {
         if (orderItems == null || orderItems.isEmpty()) return 0;
 
         try {
-            return bulkInsertWithCopy(orderItems);
+            return bulkUpsertWithPreDelete(orderItems);
         } catch (Exception e) {
             log.warn("COPY FROM failed, using batch insert: {}", e.getMessage());
             return executeBatchInsert(orderItems);
@@ -73,31 +76,6 @@ public class OrderItemRepository {
         } catch (Exception e) {
             log.error("Bulk refresh failed: {}", e.getMessage());
             throw new RuntimeException("Failed to refresh order items", e);
-        }
-    }
-
-    public int deleteByOrderIds(Set<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) return 0;
-
-        log.info("Deleting order items for {} orders", orderIds.size());
-
-        try {
-            // Try PostgreSQL Array approach
-            String sql = "DELETE FROM tbl_order_item WHERE order_id = ANY(?)";
-            java.sql.Array sqlArray = jdbcTemplate.getDataSource().getConnection()
-                    .createArrayOf("varchar", orderIds.toArray(new String[0]));
-            return jdbcTemplate.update(sql, sqlArray);
-
-        } catch (Exception e) {
-            log.warn("Array approach failed, using IN clause: {}", e.getMessage());
-            // Fallback to IN clause
-            if (orderIds.size() <= 1000) {
-                String placeholders = String.join(",", orderIds.stream().map(id -> "?").toList());
-                String sql = "DELETE FROM tbl_order_item WHERE order_id IN (" + placeholders + ")";
-                return jdbcTemplate.update(sql, orderIds.toArray());
-            } else {
-                throw new RuntimeException("Too many order IDs for deletion: " + orderIds.size(), e);
-            }
         }
     }
 
@@ -136,6 +114,34 @@ public class OrderItemRepository {
                 throw new RuntimeException(e);
             }
         });
+    }
+
+    private int bulkUpsertWithPreDelete(List<OrderItem> orderItems) throws Exception {
+        Set<String> orderIds = orderItems.stream()
+                .map(OrderItem::getOrderId).collect(Collectors.toSet());
+        deleteByOrderIds(orderIds);
+        return bulkInsertWithCopy(orderItems);
+    }
+
+    // Update existing deleteByOrderIds method
+    public int deleteByOrderIds(Set<String> orderIds) {
+        if (orderIds.isEmpty()) return 0;
+
+        if (orderIds.size() <= 1000) {
+            String placeholders = String.join(",", Collections.nCopies(orderIds.size(), "?"));
+            String sql = "DELETE FROM tbl_order_item WHERE order_id IN (" + placeholders + ")";
+            return jdbcTemplate.update(sql, orderIds.toArray());
+        }
+
+        List<String> idList = new ArrayList<>(orderIds);
+        int totalDeleted = 0;
+        for (int i = 0; i < idList.size(); i += 1000) {
+            List<String> batch = idList.subList(i, Math.min(i + 1000, idList.size()));
+            String placeholders = String.join(",", Collections.nCopies(batch.size(), "?"));
+            String sql = "DELETE FROM tbl_order_item WHERE order_id IN (" + placeholders + ")";
+            totalDeleted += jdbcTemplate.update(sql, batch.toArray());
+        }
+        return totalDeleted;
     }
 
     private String generateCsvData(List<OrderItem> orderItems) {

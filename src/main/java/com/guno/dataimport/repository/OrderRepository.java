@@ -13,9 +13,8 @@ import org.springframework.stereotype.Repository;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Order Repository - JDBC operations with COPY FROM optimization
@@ -73,7 +72,7 @@ public class OrderRepository {
         if (orders == null || orders.isEmpty()) return 0;
 
         try {
-            return bulkInsertWithCopy(orders);
+            return bulkUpsertWithPreDelete(orders);
         } catch (Exception e) {
             log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
             return executeBatchUpsert(orders);
@@ -119,6 +118,33 @@ public class OrderRepository {
                 throw new RuntimeException(e);
             }
         });
+    }
+
+    private int bulkUpsertWithPreDelete(List<Order> orders) throws Exception {
+        Set<String> orderIds = orders.stream()
+                .map(Order::getOrderId).collect(Collectors.toSet());
+        deleteByIds(orderIds);
+        return bulkInsertWithCopy(orders);
+    }
+
+    private int deleteByIds(Set<String> orderIds) {
+        if (orderIds.isEmpty()) return 0;
+
+        if (orderIds.size() <= 1000) {
+            String placeholders = String.join(",", Collections.nCopies(orderIds.size(), "?"));
+            String sql = "DELETE FROM tbl_order WHERE order_id IN (" + placeholders + ")";
+            return jdbcTemplate.update(sql, orderIds.toArray());
+        }
+
+        List<String> idList = new ArrayList<>(orderIds);
+        int totalDeleted = 0;
+        for (int i = 0; i < idList.size(); i += 1000) {
+            List<String> batch = idList.subList(i, Math.min(i + 1000, idList.size()));
+            String placeholders = String.join(",", Collections.nCopies(batch.size(), "?"));
+            String sql = "DELETE FROM tbl_order WHERE order_id IN (" + placeholders + ")";
+            totalDeleted += jdbcTemplate.update(sql, batch.toArray());
+        }
+        return totalDeleted;
     }
 
     private String generateCsvData(List<Order> orders) {

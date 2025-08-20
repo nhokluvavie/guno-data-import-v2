@@ -13,8 +13,11 @@ import org.springframework.stereotype.Repository;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Payment Repository - JDBC operations with COPY FROM optimization
@@ -61,7 +64,7 @@ public class PaymentRepository {
         if (paymentInfos == null || paymentInfos.isEmpty()) return 0;
 
         try {
-            return bulkInsertWithCopy(paymentInfos);
+            return bulkUpsertWithPreDelete(paymentInfos);
         } catch (Exception e) {
             log.warn("COPY FROM failed, using batch upsert: {}", e.getMessage());
             return executeBatchUpsert(paymentInfos);
@@ -79,13 +82,6 @@ public class PaymentRepository {
         String sql = "SELECT * FROM tbl_payment_info WHERE order_id = ?";
         List<PaymentInfo> results = jdbcTemplate.query(sql, paymentRowMapper(), orderId);
         return results.isEmpty() ? null : results.get(0);
-    }
-
-    public int deleteByOrderIds(Set<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) return 0;
-
-        String sql = "DELETE FROM tbl_payment_info WHERE order_id = ANY(?)";
-        return jdbcTemplate.update(sql, orderIds.toArray(new String[0]));
     }
 
     public long count() {
@@ -106,6 +102,34 @@ public class PaymentRepository {
                 throw new RuntimeException(e);
             }
         });
+    }
+
+    private int bulkUpsertWithPreDelete(List<PaymentInfo> paymentInfos) throws Exception {
+        Set<String> orderIds = paymentInfos.stream()
+                .map(PaymentInfo::getOrderId).collect(Collectors.toSet());
+        deleteByOrderIds(orderIds);
+        return bulkInsertWithCopy(paymentInfos);
+    }
+
+    // Update existing deleteByOrderIds method
+    public int deleteByOrderIds(Set<String> orderIds) {
+        if (orderIds.isEmpty()) return 0;
+
+        if (orderIds.size() <= 1000) {
+            String placeholders = String.join(",", Collections.nCopies(orderIds.size(), "?"));
+            String sql = "DELETE FROM tbl_payment_info WHERE order_id IN (" + placeholders + ")";
+            return jdbcTemplate.update(sql, orderIds.toArray());
+        }
+
+        List<String> idList = new ArrayList<>(orderIds);
+        int totalDeleted = 0;
+        for (int i = 0; i < idList.size(); i += 1000) {
+            List<String> batch = idList.subList(i, Math.min(i + 1000, idList.size()));
+            String placeholders = String.join(",", Collections.nCopies(batch.size(), "?"));
+            String sql = "DELETE FROM tbl_payment_info WHERE order_id IN (" + placeholders + ")";
+            totalDeleted += jdbcTemplate.update(sql, batch.toArray());
+        }
+        return totalDeleted;
     }
 
     private String generateCsvData(List<PaymentInfo> paymentInfos) {

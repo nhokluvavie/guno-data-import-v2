@@ -144,7 +144,7 @@ public class FacebookOrderDto {
         @JsonProperty("customer")
         private FacebookCustomer customer;
 
-        @JsonProperty("update_at")
+        @JsonProperty("updated_at")
         private String updateAt;
 
         @JsonProperty("bill_phone_number")

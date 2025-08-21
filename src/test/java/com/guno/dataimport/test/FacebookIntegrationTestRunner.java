@@ -8,6 +8,7 @@ import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ImportSummary;
 import com.guno.dataimport.dto.internal.ProcessingResult;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
+import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
 import com.guno.dataimport.processor.BatchProcessor;
 import com.guno.dataimport.processor.ValidationProcessor;
 import com.guno.dataimport.repository.*;
@@ -20,6 +21,8 @@ import org.springframework.test.context.ActiveProfiles;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -328,34 +331,95 @@ class FacebookIntegrationTestRunner {
 
     @Test
     @Order(9)
-    void shouldImportFullDailyDataFromConfig() {
-        log.info("🚀 Phase 9: Testing FULL DAILY DATA Import (Production Volume)");
-
-        log.info("   📅 Import date: {}", configuredTestDate);
-
-        long startTime = System.currentTimeMillis();
-        ImportSummary summary = null;
+    void shouldImportFullDailyDataFromConfigWithDetailedLogging() {
+        log.info("🚀 Phase 9: ENHANCED Full Data Import - Date: {}", configuredTestDate);
 
         try {
-            // Full data collection with MEGA-OPTIMIZED buffering
-            summary = bufferedDataCollector.collectWithBuffer(configuredTestDate,10000, 500);
+            // 1. Analyze API data before processing
+            analyzeApiData();
 
+            // 2. Process with detailed logging
+            long startTime = System.currentTimeMillis();
+            ImportSummary summary = bufferedDataCollector.collectWithBuffer(configuredTestDate, 10000, 500);
             long duration = System.currentTimeMillis() - startTime;
 
-            // Performance Analysis
-            logFullDataResults(summary, duration, configuredTestDate);
+            // 3. Analyze results
+            analyzeResults(summary, duration);
 
-            // Database insert breakdown for this run
-            logInsertBreakdown(summary, configuredTestDate);
-
-            // Validation
-            validateProductionData(summary);
-
-            log.info("✅ Phase 9 Completed: PRODUCTION-READY Full Data Import");
+            log.info("✅ Phase 9 Completed: Enhanced Full Data Import");
 
         } catch (Exception e) {
-            log.error("❌ Full data import failed: {}", e.getMessage(), e);
-            fail("Production data import should handle large volumes");
+            log.error("❌ Enhanced import failed: {}", e.getMessage(), e);
+            fail("Enhanced import should handle production volumes");
+        }
+    }
+
+    private void analyzeApiData() {
+        log.info("📡 API Data Analysis:");
+        try {
+            FacebookApiResponse response = facebookApiClient.fetchOrders(configuredTestDate, 1, 3);
+            if (response.getData().getOrders() != null) {
+                var orders = response.getData().getOrders();
+                log.info("   - API returned {} orders", orders.size());
+
+                orders.stream().forEach(order -> System.out.println(order.getCreatedAt()));
+                // Analyze date distribution
+                var dateMap = orders.stream()
+                        .filter(o -> o.getCreatedAt() != null)
+                        .collect(Collectors.groupingBy(o -> extractDate(o.getCreatedAt()), Collectors.counting()));
+
+                log.info("   - Date distribution:");
+                dateMap.forEach((date, count) -> log.info("     * {}: {} orders", date, count));
+
+                // Sample order details
+                if (!orders.isEmpty()) {
+                    var sample = orders.get(0);
+                    String mappedDate = extractDate(sample.getCreatedAt());
+                    log.info("   - Sample Order: {} created on {}", sample.getOrderId(), mappedDate);
+                    log.info("   - Target vs Mapped: {} vs {}", configuredTestDate, mappedDate);
+
+                    if (!configuredTestDate.equals(mappedDate)) {
+                        log.warn("   ⚠️ Target date ≠ Order date! Query will find no records for {}", configuredTestDate);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("   API analysis failed: {}", e.getMessage());
+        }
+    }
+
+    private void analyzeResults(ImportSummary summary, long duration) {
+        int apiOrders = summary.getPlatformCounts().getOrDefault("FACEBOOK", 0);
+        log.info("📊 Processing Results:");
+        log.info("   - API Orders: {}", apiOrders);
+        log.info("   - Duration: {}ms", duration);
+        log.info("   - DB Records: {}", summary.getTotalInsertedRecords());
+
+        // Database verification
+        log.info("📋 Database Verification:");
+        log.info("   - Total processing_date_info: {}", processingDateRepository.count());
+        log.info("   - Records for target date '{}': {}",
+                configuredTestDate, countRecordsForDate(configuredTestDate));
+
+        validateProductionData(summary);
+    }
+
+    private String extractDate(String dateTime) {
+        try {
+            return LocalDateTime.parse(dateTime.replace("Z", ""))
+                    .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        } catch (Exception e) {
+            return "INVALID";
+        }
+    }
+
+    private long countRecordsForDate(String date) {
+        try {
+            return processingDateRepository.findByOrderIds(Set.of("dummy")).stream()
+                    .filter(d -> date.equals(d.getFullDate()))
+                    .count();
+        } catch (Exception e) {
+            return 0;
         }
     }
 

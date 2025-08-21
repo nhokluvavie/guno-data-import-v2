@@ -13,6 +13,7 @@ import org.springframework.stereotype.Repository;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -192,8 +193,9 @@ public class ProcessingDateRepository {
         return (rs, rowNum) -> ProcessingDateInfo.builder()
                 .orderId(rs.getString("order_id"))
                 .dateKey(rs.getLong("date_key"))
-                .fullDate(rs.getTimestamp("full_date") != null ?
-                        rs.getTimestamp("full_date").toLocalDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : null)
+                .fullDate(rs.getString("full_date") != null ?
+                        LocalDateTime.parse(rs.getString("full_date").replace("Z", "")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+                        : null)
                 .dayOfWeek(rs.getInt("day_of_week"))
                 .dayOfWeekName(rs.getString("day_of_week_name"))
                 .dayOfMonth(rs.getInt("day_of_month"))

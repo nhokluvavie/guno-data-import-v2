@@ -260,7 +260,7 @@ public class BatchProcessor {
             return ProcessingDateInfo.builder()
                     .orderId(order.getOrderId())
                     .dateKey(Long.valueOf(createdAt.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"))))
-                    .fullDate(order.getCreatedAt().formatted(DateTimeFormatter.ofPattern("yyyy-MM-dd")))
+                    .fullDate(LocalDateTime.parse(order.getCreatedAt().replace("Z", "")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd")))
                     .dayOfWeek(createdAt.getDayOfWeek().getValue())
                     .dayOfWeekName(createdAt.getDayOfWeek().name())
                     .dayOfMonth(createdAt.getDayOfMonth())

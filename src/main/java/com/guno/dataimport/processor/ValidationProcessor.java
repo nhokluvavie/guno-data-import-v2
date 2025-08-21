@@ -26,10 +26,16 @@ public class ValidationProcessor {
             return errors;
         }
 
-        log.info("Validating collected data with {} total orders", collectedData.getTotalOrders());
+        log.info("Validating collected data - Facebook: {}, TikTok: {}, Total: {}",
+                collectedData.getFacebookOrders().size(),
+                collectedData.getTikTokOrders().size(),
+                collectedData.getTotalOrders());
 
         // Validate Facebook orders
         errors.addAll(validateFacebookOrders(collectedData.getFacebookOrders()));
+
+        // Validate TikTok orders (REUSES Facebook validation logic!)
+        errors.addAll(validateTikTokOrders(collectedData.getTikTokOrders()));
 
         log.info("Validation completed with {} errors", errors.size());
         return errors;
@@ -68,6 +74,18 @@ public class ValidationProcessor {
         }
 
         return errors;
+    }
+
+    private List<ErrorReport> validateTikTokOrders(List<Object> tikTokOrderObjects) {
+        if (tikTokOrderObjects == null || tikTokOrderObjects.isEmpty()) {
+            log.info("No TikTok orders to validate");
+            return new ArrayList<>();
+        }
+
+        log.info("Validating {} TikTok orders", tikTokOrderObjects.size());
+
+        // REUSE: Same validation logic as Facebook (same JSON structure)
+        return validateFacebookOrders(tikTokOrderObjects);
     }
 
     /**

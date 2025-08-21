@@ -34,36 +34,48 @@ public class BatchProcessor {
     private final PaymentRepository paymentRepository;
     private final ShippingRepository shippingRepository;
     private final ProcessingDateRepository processingDateRepository;
+    private final OrderStatusRepository orderStatusRepository;
+    private final OrderStatusDetailRepository orderStatusDetailRepository;
+    private final StatusRepository statusRepository;
 
     /**
      * MAIN ENTRY POINT: Process with temp table strategy
      */
     @Transactional
     public ProcessingResult processCollectedData(CollectedData collectedData) {
-        log.info("Starting TEMP TABLE batch processing (no delete operations)");
-
-        ProcessingResult result = ProcessingResult.builder()
-                .processedAt(LocalDateTime.now())
-                .build();
-
-        long startTime = System.currentTimeMillis();
-
-        try {
-            ProcessingResult facebookResult = processFacebookOrders(collectedData.getFacebookOrders());
-
-            result.setTotalProcessed(facebookResult.getTotalProcessed());
-            result.setSuccessCount(facebookResult.getSuccessCount());
-            result.setFailedCount(facebookResult.getFailedCount());
-            result.getErrors().addAll(facebookResult.getErrors());
-
-        } catch (Exception e) {
-            log.error("Temp table processing error: {}", e.getMessage(), e);
-            result.setFailedCount(result.getTotalProcessed());
-            result.getErrors().add(ErrorReport.of("BATCH", "ALL", "FACEBOOK", e));
+        if (collectedData == null || collectedData.getTotalOrders() == 0) {
+            return ProcessingResult.builder().build();
         }
 
-        result.setProcessingTimeMs(System.currentTimeMillis() - startTime);
-        log.info("TEMP TABLE processing completed - Success: {}, Failed: {}, Duration: {}ms",
+        long startTime = System.currentTimeMillis();
+        ProcessingResult result = ProcessingResult.builder().build();
+
+        log.info("Processing collected data - Facebook: {}, TikTok: {}, Total: {}",
+                collectedData.getFacebookOrders().size(),
+                collectedData.getTikTokOrders().size(),
+                collectedData.getTotalOrders());
+
+        try {
+            // Process Facebook orders
+            if (!collectedData.getFacebookOrders().isEmpty()) {
+                ProcessingResult facebookResult = processFacebookOrders(collectedData.getFacebookOrders());
+                result.merge(facebookResult);
+            }
+
+            // Process TikTok orders (REUSES Facebook processing!)
+            if (!collectedData.getTikTokOrders().isEmpty()) {
+                ProcessingResult tikTokResult = processTikTokOrders(collectedData.getTikTokOrders());
+                result.merge(tikTokResult);
+            }
+
+            result.setProcessingTimeMs(System.currentTimeMillis() - startTime);
+
+        } catch (Exception e) {
+            log.error("Processing failed: {}", e.getMessage(), e);
+            result.setFailedCount(collectedData.getTotalOrders());
+        }
+
+        log.info("Processing completed - Success: {}, Failed: {}, Duration: {}ms",
                 result.getSuccessCount(), result.getFailedCount(), result.getProcessingTimeMs());
 
         return result;
@@ -97,9 +109,13 @@ public class BatchProcessor {
             List<GeographyInfo> geography = mapGeography(facebookOrders, result);
             List<PaymentInfo> payments = mapPayments(facebookOrders, result);
             List<ProcessingDateInfo> dates = mapDates(facebookOrders, result);
+            List<ShippingInfo> shipping = mapShipping(facebookOrders, result);
+            List<Status> statuses = mapStatus(facebookOrders, result);
+            List<OrderStatus> orderStatuses = mapOrderStatus(facebookOrders, result);
+            List<OrderStatusDetail> orderStatusDetails = mapOrderStatusDetail(facebookOrders, result);
 
-            log.info("Mapped entities - Customers: {}, Orders: {}, Items: {}, Products: {}",
-                    customers.size(), orders.size(), orderItems.size(), products.size());
+            log.info("Mapped entities - Customers: {}, Orders: {}, Items: {}, Products: {}, Shipping: {}, Status: {}, OrderStatus: {}, OrderStatusDetail: {}",
+                    customers.size(), orders.size(), orderItems.size(), products.size(), shipping.size(), statuses.size(), orderStatuses.size(), orderStatusDetails.size());
 
             // TEMP TABLE bulk upserts (handles all duplicates automatically)
             log.info("Starting TEMP TABLE upserts for all entities");
@@ -125,6 +141,18 @@ public class BatchProcessor {
             processingDateRepository.bulkUpsert(dates);
             log.debug("✅ Processing dates upserted via temp table");
 
+            shippingRepository.bulkUpsert(shipping);
+            log.debug("✅ Shipping upserted via temp table");
+
+            statusRepository.bulkUpsert(statuses);
+            log.debug("✅ Status upserted via temp table");
+
+            orderStatusRepository.bulkUpsert(orderStatuses);
+            log.debug("✅ Order status upserted via temp table");
+
+            orderStatusDetailRepository.bulkUpsert(orderStatusDetails);
+            log.debug("✅ Order status detail upserted via temp table");
+
             result.setSuccessCount(facebookOrders.size() - result.getFailedCount());
             log.info("Successfully processed {} orders via TEMP TABLE strategy", result.getSuccessCount());
 
@@ -135,6 +163,18 @@ public class BatchProcessor {
         }
 
         return result;
+    }
+
+    public ProcessingResult processTikTokOrders(List<Object> tikTokOrderObjects) {
+        if (tikTokOrderObjects == null || tikTokOrderObjects.isEmpty()) {
+            return ProcessingResult.builder().build();
+        }
+
+        log.info("Processing {} TikTok orders with TEMP TABLE strategy (via FacebookMapper)",
+                tikTokOrderObjects.size());
+
+        // REUSE: Existing Facebook processing logic!
+        return processFacebookOrders(tikTokOrderObjects);
     }
 
     // ================================
@@ -247,6 +287,64 @@ public class BatchProcessor {
                 })
                 .filter(date -> date != null)
                 .toList();
+    }
+
+    private List<ShippingInfo> mapShipping(List<FacebookOrderDto> orders, ProcessingResult result) {
+        return orders.stream()
+                .map(order -> {
+                    try {
+                        return facebookMapper.mapToShippingInfo(order);
+                    } catch (Exception e) {
+                        result.getErrors().add(ErrorReport.of("SHIPPING", order.getOrderId(), "FACEBOOK", e));
+                        return null;
+                    }
+                })
+                .filter(shipping -> shipping != null)
+                .toList();
+    }
+
+    private List<Status> mapStatus(List<FacebookOrderDto> orders, ProcessingResult result) {
+        List<Status> allStatuses = new ArrayList<>();
+        for (FacebookOrderDto order : orders) {
+            try {
+                allStatuses.addAll(facebookMapper.mapToStatus(order));
+            } catch (Exception e) {
+                result.getErrors().add(ErrorReport.of("STATUS", order.getOrderId(), "FACEBOOK", e));
+            }
+        }
+        // Remove duplicates by statusKey
+        return allStatuses.stream()
+                .collect(Collectors.toMap(
+                        Status::getStatusKey,
+                        status -> status,
+                        (existing, replacement) -> existing))
+                .values()
+                .stream()
+                .toList();
+    }
+
+    private List<OrderStatus> mapOrderStatus(List<FacebookOrderDto> orders, ProcessingResult result) {
+        List<OrderStatus> allOrderStatuses = new ArrayList<>();
+        for (FacebookOrderDto order : orders) {
+            try {
+                allOrderStatuses.addAll(facebookMapper.mapToOrderStatus(order));
+            } catch (Exception e) {
+                result.getErrors().add(ErrorReport.of("ORDER_STATUS", order.getOrderId(), "FACEBOOK", e));
+            }
+        }
+        return allOrderStatuses;
+    }
+
+    private List<OrderStatusDetail> mapOrderStatusDetail(List<FacebookOrderDto> orders, ProcessingResult result) {
+        List<OrderStatusDetail> allDetails = new ArrayList<>();
+        for (FacebookOrderDto order : orders) {
+            try {
+                allDetails.addAll(facebookMapper.mapToOrderStatusDetail(order));
+            } catch (Exception e) {
+                result.getErrors().add(ErrorReport.of("ORDER_STATUS_DETAIL", order.getOrderId(), "FACEBOOK", e));
+            }
+        }
+        return allDetails;
     }
 
     /**

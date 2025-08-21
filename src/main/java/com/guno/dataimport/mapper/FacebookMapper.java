@@ -192,6 +192,138 @@ public class FacebookMapper {
                 .build();
     }
 
+    /**
+     * Map Facebook order to ShippingInfo entity
+     */
+    public ShippingInfo mapToShippingInfo(FacebookOrderDto order) {
+        if (order == null) return null;
+
+        return ShippingInfo.builder()
+                .orderId(order.getOrderId())
+                .shippingKey(generateKey("SHIP_" + order.getOrderId()))
+                // REAL DATA from Facebook
+                .baseFee(safeDouble(order.getShippingFee()))
+                .supportsCod(order.isCodOrder())
+                .coverageProvinces(getProvinceName(order))
+                // REQUIRED DEFAULTS (minimal)
+                .providerId("FACEBOOK")
+                .providerName("Facebook Marketplace")
+                .providerType("MARKETPLACE")
+                // NULL/ZERO for unknown data
+                .weightBasedFee(0.0)
+                .distanceBasedFee(0.0)
+                .codFee(0.0)
+                .insuranceFee(0.0)
+                .supportsInsurance(false)
+                .supportsFragile(false)
+                .supportsRefrigerated(false)
+                .providesTracking(false)
+                .providesSmsUpdates(false)
+                .averageDeliveryDays((double) 0) // Unknown
+                .onTimeDeliveryRate(0.0) // Unknown
+                .successDeliveryRate(0.0) // Unknown
+                .damageRate(0.0) // Unknown
+                .coverageNationwide(false) // Unknown
+                .coverageInternational(false) // Unknown
+                .build();
+    }
+
+    /**
+     * Map Facebook order to Status entities (master data)
+     */
+    public List<Status> mapToStatus(FacebookOrderDto order) {
+        if (order == null) return new ArrayList<>();
+
+        List<Status> statuses = new ArrayList<>();
+
+        // Facebook platform status mapping
+        Integer currentStatus = order.getStatus();
+        String statusName = order.getStatusName();
+
+        if (currentStatus != null) {
+            Status status = Status.builder()
+                    .statusKey((long) currentStatus)
+                    .platform("FACEBOOK")
+                    .platformStatusCode(currentStatus.toString())
+                    .platformStatusName(statusName != null ? statusName : getStandardStatusName(currentStatus))
+                    .standardStatusCode(mapToStandardStatus(currentStatus))
+                    .standardStatusName(getStandardStatusName(currentStatus))
+                    .statusCategory(getStatusCategory(currentStatus))
+                    .build();
+            statuses.add(status);
+        }
+
+        return statuses;
+    }
+
+    /**
+     * Map Facebook order to OrderStatus entities (history)
+     */
+    public List<OrderStatus> mapToOrderStatus(FacebookOrderDto order) {
+        if (order == null) return new ArrayList<>();
+
+        List<OrderStatus> orderStatuses = new ArrayList<>();
+
+        Integer currentStatus = order.getStatus();
+        if (currentStatus != null) {
+            OrderStatus orderStatus = OrderStatus.builder()
+                    .statusKey((long) currentStatus)
+                    .orderId(order.getOrderId())
+                    .transitionDateKey(getCurrentDateKey())
+                    .transitionTimestamp(parseDateTime(order.getCreatedAt()))
+                    .durationInPreviousStatusHours(0)
+                    .transitionReason("ORDER_CREATED")
+                    .transitionTrigger("SYSTEM")
+                    .changedBy("FACEBOOK_API")
+                    .isOnTimeTransition(true)
+                    .isExpectedTransition(true)
+                    .historyKey(generateKey("HIST_" + order.getOrderId()))
+                    .build();
+            orderStatuses.add(orderStatus);
+        }
+
+        return orderStatuses;
+    }
+
+    /**
+     * Map Facebook order to OrderStatusDetail entities
+     */
+    public List<OrderStatusDetail> mapToOrderStatusDetail(FacebookOrderDto order) {
+        if (order == null) return new ArrayList<>();
+
+        List<OrderStatusDetail> details = new ArrayList<>();
+
+        Integer currentStatus = order.getStatus();
+        if (currentStatus != null) {
+            boolean isCompleted = isStatus(currentStatus, 4); // Delivered
+            boolean isCancelled = isStatus(currentStatus, -1); // Cancelled
+            boolean isActive = !isCompleted && !isCancelled;
+
+            OrderStatusDetail detail = OrderStatusDetail.builder()
+                    .statusKey((long) currentStatus)
+                    .orderId(order.getOrderId())
+                    .isActiveOrder(isActive)
+                    .isCompletedOrder(isCompleted)
+                    .isRevenueRecognized(isCompleted)
+                    .isRefundable(isCompleted)
+                    .isCancellable(isActive)
+                    .isTrackable(true)
+                    .nextPossibleStatuses(getNextPossibleStatuses(currentStatus))
+                    .autoTransitionHours(24)
+                    .requiresManualAction(false)
+                    .statusColor(getStatusColor(currentStatus))
+                    .statusIcon(getStatusIcon(currentStatus))
+                    .customerVisible(true)
+                    .customerDescription(getCustomerStatusDescription(currentStatus))
+                    .averageDurationHours(getAverageDurationHours(currentStatus))
+                    .successRate(95.0)
+                    .build();
+            details.add(detail);
+        }
+
+        return details;
+    }
+
     // IMPROVED: Consolidated helper methods with better null/empty handling
     private String getSku(FacebookItemDto item) {
         if (item.getVariationInfo() != null) {
@@ -379,5 +511,103 @@ public class FacebookMapper {
 
         log.warn("Unable to parse datetime: {}", dateTime);
         return null;
+    }
+
+    private String mapToStandardStatus(Integer facebookStatus) {
+        if (facebookStatus == null) return "UNKNOWN";
+        return switch (facebookStatus) {
+            case 1 -> "PENDING";
+            case 2 -> "CONFIRMED";
+            case 3 -> "SHIPPING";
+            case 4 -> "DELIVERED";
+            case -1 -> "CANCELLED";
+            default -> "UNKNOWN";
+        };
+    }
+
+    private String getStandardStatusName(Integer status) {
+        if (status == null) return "Unknown";
+        return switch (status) {
+            case 1 -> "Pending";
+            case 2 -> "Confirmed";
+            case 3 -> "Shipping";
+            case 4 -> "Delivered";
+            case -1 -> "Cancelled";
+            default -> "Unknown";
+        };
+    }
+
+    private String getStatusCategory(Integer status) {
+        if (status == null) return "UNKNOWN";
+        return switch (status) {
+            case 1, 2 -> "PROCESSING";
+            case 3 -> "FULFILLMENT";
+            case 4 -> "COMPLETED";
+            case -1 -> "CANCELLED";
+            default -> "UNKNOWN";
+        };
+    }
+
+    private String getNextPossibleStatuses(Integer currentStatus) {
+        if (currentStatus == null) return "";
+        return switch (currentStatus) {
+            case 1 -> "2,-1"; // Pending -> Confirmed or Cancelled
+            case 2 -> "3,-1"; // Confirmed -> Shipping or Cancelled
+            case 3 -> "4,-1"; // Shipping -> Delivered or Cancelled
+            case 4, -1 -> ""; // Final states
+            default -> "";
+        };
+    }
+
+    private String getStatusColor(Integer status) {
+        if (status == null) return "#gray";
+        return switch (status) {
+            case 1 -> "#orange";   // Pending
+            case 2 -> "#blue";     // Confirmed
+            case 3 -> "#purple";   // Shipping
+            case 4 -> "#green";    // Delivered
+            case -1 -> "#red";     // Cancelled
+            default -> "#gray";
+        };
+    }
+
+    private String getStatusIcon(Integer status) {
+        if (status == null) return "help-circle";
+        return switch (status) {
+            case 1 -> "clock";         // Pending
+            case 2 -> "check-circle";  // Confirmed
+            case 3 -> "truck";         // Shipping
+            case 4 -> "package";       // Delivered
+            case -1 -> "x-circle";     // Cancelled
+            default -> "help-circle";
+        };
+    }
+
+    private String getCustomerStatusDescription(Integer status) {
+        if (status == null) return "Unknown status";
+        return switch (status) {
+            case 1 -> "Your order is being processed";
+            case 2 -> "Your order has been confirmed";
+            case 3 -> "Your order is on the way";
+            case 4 -> "Your order has been delivered";
+            case -1 -> "Your order has been cancelled";
+            default -> "Unknown status";
+        };
+    }
+
+    private double getAverageDurationHours(Integer status) {
+        if (status == null) return 0.0;
+        return switch (status) {
+            case 1 -> 2.0;   // Pending: 2 hours
+            case 2 -> 4.0;   // Confirmed: 4 hours
+            case 3 -> 24.0;  // Shipping: 24 hours
+            case 4 -> 0.0;   // Delivered: final
+            case -1 -> 0.0;  // Cancelled: final
+            default -> 0.0;
+        };
+    }
+
+    private Integer getCurrentDateKey() {
+        return Integer.valueOf(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")));
     }
 }

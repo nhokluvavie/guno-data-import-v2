@@ -20,13 +20,13 @@ public class CollectedData {
     private List<Object> shopeeOrders = new ArrayList<>();
 
     @Builder.Default
-    private List<Object> tiktokOrders = new ArrayList<>();
+    private List<Object> tikTokOrders = new ArrayList<>();
 
     @Builder.Default
     private List<Object> facebookOrders = new ArrayList<>();
 
     public int getTotalOrders() {
-        return shopeeOrders.size() + tiktokOrders.size() + facebookOrders.size();
+        return shopeeOrders.size() + tikTokOrders.size() + facebookOrders.size();
     }
 
     public boolean isEmpty() {

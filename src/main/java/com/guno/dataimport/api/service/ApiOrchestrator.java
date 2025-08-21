@@ -1,6 +1,7 @@
 package com.guno.dataimport.api.service;
 
 import com.guno.dataimport.api.client.FacebookApiClient;
+import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.buffer.BufferedDataCollector;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ImportSummary;
@@ -23,6 +24,7 @@ import java.util.concurrent.Executors;
 public class ApiOrchestrator {
 
     private final FacebookApiClient facebookApiClient;
+    private final TikTokApiClient tikTokApiClient;
     private final BatchProcessor batchProcessor;
     private final BufferedDataCollector bufferedDataCollector;
 
@@ -33,6 +35,10 @@ public class ApiOrchestrator {
      */
     public FacebookApiClient getFacebookApiClient() {
         return facebookApiClient;
+    }
+
+    public TikTokApiClient getTikTokApiClient() {
+        return tikTokApiClient;
     }
 
     /**
@@ -105,21 +111,35 @@ public class ApiOrchestrator {
     // === PRIVATE IMPLEMENTATION ===
 
     private CollectedData collectSinglePage() {
-        CollectedData collectedData = new CollectedData();
+        log.info("Collecting single page from all platforms");
+
+        CollectedData data = new CollectedData();
+
         try {
-            FacebookApiResponse response = facebookApiClient.fetchOrders();
-            if (response.isSuccess() && response.getData() != null) {
-                collectedData.setFacebookOrders(
-                        response.getData().getOrders().stream()
-                                .map(order -> (Object) order)
-                                .toList()
-                );
-                log.info("Single page: {} orders", response.getOrderCount());
+            // Facebook collection
+            FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders("", 1, 100);
+            if (facebookResponse.getData() != null) {
+                data.setFacebookOrders(facebookResponse.getData().getOrders().stream()
+                        .map(order -> (Object) order)
+                        .toList());
             }
+
+            // TikTok collection (REUSES FacebookApiResponse!)
+            FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders("", 1, 100);
+            if (tikTokResponse.getData() != null) {
+                data.setTikTokOrders(tikTokResponse.getData().getOrders().stream()
+                        .map(order -> (Object) order)
+                        .toList());
+            }
+
+            log.info("Collected - Facebook: {}, TikTok: {}",
+                    data.getFacebookOrders().size(), data.getTikTokOrders().size());
+
         } catch (Exception e) {
-            log.error("Single page error: {}", e.getMessage(), e);
+            log.error("Collection failed: {}", e.getMessage(), e);
         }
-        return collectedData;
+
+        return data;
     }
 
     private CollectedData collectDataWithBuffer(int bufferSize) {

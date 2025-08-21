@@ -39,6 +39,18 @@ api:
     default-date: "2025-08-20"  # Configurable date for testing
     source: "facebook"       # Default source
 
+  tiktok:
+    base-url: https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search
+    headers:
+      Authorization: x-webhook-api-key
+      X-API-Key: iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr
+    timeout-seconds: 300
+    page-size: 1
+    max-retries: 3
+    retry-delay-ms: 1000
+    default-date: "2025-08-20"
+    source: "tiktok"
+
   # Common API settings for test
   common:
     connect-timeout-ms: 10000

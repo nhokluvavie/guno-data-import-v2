@@ -105,7 +105,7 @@ public class FacebookApiClient {
                 );
 
                 // Debug raw response
-                log.debug("Raw API Response: {}", response.getBody());
+//                log.debug("Raw API Response: {}", response.getBody());
 
                 // Parse manually to FacebookApiResponse
                 FacebookApiResponse apiResponse = objectMapper.readValue(response.getBody(), FacebookApiResponse.class);

@@ -108,7 +108,7 @@ public class TikTokApiClient {
                 );
 
                 // Debug raw response
-                log.debug("Raw TikTok API Response: {}", response.getBody());
+//                log.debug("Raw TikTok API Raesponse: {}", response.getBody());
 
                 // Parse manually to FacebookApiResponse
                 FacebookApiResponse apiResponse = objectMapper.readValue(response.getBody(), FacebookApiResponse.class);

@@ -10,14 +10,9 @@ import com.guno.dataimport.processor.BatchProcessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * API Orchestrator - Coordinates data collection with buffer optimization
- * ENHANCED: Integrated buffer classes for 10x performance boost
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -28,22 +23,8 @@ public class ApiOrchestrator {
     private final BatchProcessor batchProcessor;
     private final BufferedDataCollector bufferedDataCollector;
 
-    private final ExecutorService executorService = Executors.newFixedThreadPool(2);
+    private final ExecutorService executorService = Executors.newFixedThreadPool(3);
 
-    /**
-     * Get Facebook API Client
-     */
-    public FacebookApiClient getFacebookApiClient() {
-        return facebookApiClient;
-    }
-
-    public TikTokApiClient getTikTokApiClient() {
-        return tikTokApiClient;
-    }
-
-    /**
-     * UNIFIED: Collect data with flexible options
-     */
     public CollectedData collectData(boolean useBuffer, int bufferSize) {
         if (useBuffer) {
             return collectDataWithBuffer(bufferSize);
@@ -52,149 +33,130 @@ public class ApiOrchestrator {
         }
     }
 
-    /**
-     * DEFAULT: Single page collection
-     */
     public CollectedData collectData() {
         return collectData(false, 0);
     }
 
-    /**
-     * ENHANCED: Process with buffer optimization
-     */
     public ImportSummary processInBatches(int pageSize, boolean useBuffer, int bufferSize) {
         if (useBuffer) {
-            log.info("Using BUFFERED processing - Buffer: {}, PageSize: {}", bufferSize, pageSize);
+            log.info("Using BUFFERED multi-platform processing - Buffer: {}, PageSize: {}", bufferSize, pageSize);
             return bufferedDataCollector.collectWithBuffer(bufferSize, pageSize);
         } else {
-            log.info("Using STANDARD processing - PageSize: {}", pageSize);
+            log.info("Using STANDARD multi-platform processing - PageSize: {}", pageSize);
             return processPageByPage(pageSize);
         }
     }
 
-    /**
-     * OPTIMIZED: Default buffered processing (RECOMMENDED)
-     */
     public ImportSummary collectAndProcessInBatches() {
-        return processInBatches(100, true, 500); // Buffer 500 orders
+        return processInBatches(100, true, 500);
     }
 
-    /**
-     * LEGACY: Page by page (for compatibility)
-     */
+    public ImportSummary processPageByPage(int pageSize) {
+        log.info("Processing multi-platform data page by page - PageSize: {}", pageSize);
+
+        CollectedData data = collectSinglePage();
+        if (data.getTotalOrders() == 0) {
+            log.warn("No orders collected from any platform");
+            return ImportSummary.builder()
+                    .totalApiCalls(2)
+                    .totalDbOperations(0)
+                    .build();
+        }
+
+        var result = batchProcessor.processCollectedData(data);
+
+        return ImportSummary.builder()
+                .totalApiCalls(2)
+                .totalDbOperations(result.getSuccessCount() * 11)
+                .duration(result.getProcessingTimeMs())
+                .platformCounts(data.getPlatformCounts())
+                .build();
+    }
+
     public void collectAndProcessInBatchesLegacy() {
         processPageByPage(100);
     }
 
-    /**
-     * Async collection with buffer support
-     */
-    public CompletableFuture<ImportSummary> collectDataAsync(boolean useBuffer, int bufferSize) {
-        return CompletableFuture.supplyAsync(() ->
-                processInBatches(100, useBuffer, bufferSize), executorService);
+    public boolean areApisAvailable() {
+        boolean facebookAvailable = facebookApiClient.isApiAvailable();
+        boolean tikTokAvailable = tikTokApiClient.isApiAvailable();
+
+        log.info("API Availability Check - Facebook: {}, TikTok: {}", facebookAvailable, tikTokAvailable);
+
+        return facebookAvailable || tikTokAvailable;
     }
 
-    /**
-     * Check API availability
-     */
-    public boolean areApisAvailable() {
+    public boolean isFacebookApiAvailable() {
         return facebookApiClient.isApiAvailable();
     }
 
-    /**
-     * Clean up resources
-     */
+    public boolean isTikTokApiAvailable() {
+        return tikTokApiClient.isApiAvailable();
+    }
+
     public void shutdown() {
         executorService.shutdown();
     }
 
-    // === PRIVATE IMPLEMENTATION ===
-
+    // Private methods
     private CollectedData collectSinglePage() {
-        log.info("Collecting single page from all platforms");
+        log.info("Collecting single page from all platforms (Facebook + TikTok)");
 
         CollectedData data = new CollectedData();
 
         try {
-            // Facebook collection
             FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders("", 1, 100);
-            if (facebookResponse.getData() != null) {
+            if (facebookResponse.getData() != null && facebookResponse.getData().getOrders() != null) {
                 data.setFacebookOrders(facebookResponse.getData().getOrders().stream()
                         .map(order -> (Object) order)
                         .toList());
+                log.info("Collected {} Facebook orders", data.getFacebookOrders().size());
             }
 
-            // TikTok collection (REUSES FacebookApiResponse!)
             FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders("", 1, 100);
-            if (tikTokResponse.getData() != null) {
+            if (tikTokResponse.getData() != null && tikTokResponse.getData().getOrders() != null) {
                 data.setTikTokOrders(tikTokResponse.getData().getOrders().stream()
                         .map(order -> (Object) order)
                         .toList());
+                log.info("Collected {} TikTok orders", data.getTikTokOrders().size());
             }
 
-            log.info("Collected - Facebook: {}, TikTok: {}",
-                    data.getFacebookOrders().size(), data.getTikTokOrders().size());
+            log.info("Total multi-platform collection: Facebook={}, TikTok={}, Total={}",
+                    data.getFacebookOrders().size(),
+                    data.getTikTokOrders().size(),
+                    data.getTotalOrders());
 
         } catch (Exception e) {
-            log.error("Collection failed: {}", e.getMessage(), e);
+            log.error("Multi-platform collection error: {}", e.getMessage(), e);
         }
 
         return data;
     }
 
     private CollectedData collectDataWithBuffer(int bufferSize) {
-        // For single collection, buffer doesn't make sense
-        // Return single page but log the intent
-        log.info("Buffer requested for single collection - using single page");
-        return collectSinglePage();
+        log.info("Collecting multi-platform data with buffer optimization - BufferSize: {}", bufferSize);
+        return bufferedDataCollector.collectMultiPlatformData(bufferSize);
     }
 
-    private ImportSummary processPageByPage(int pageSize) {
-        ImportSummary summary = ImportSummary.builder()
-                .startTime(java.time.LocalDateTime.now())
-                .build();
+    public String getProcessingStats() {
+        return String.format(
+                "ApiOrchestrator: Facebook API=%s, TikTok API=%s, Executor=%s",
+                isFacebookApiAvailable() ? "Available" : "Unavailable",
+                isTikTokApiAvailable() ? "Available" : "Unavailable",
+                executorService.isShutdown() ? "Shutdown" : "Active"
+        );
+    }
 
-        int currentPage = 1;
-        int totalProcessed = 0;
-        int totalApiCalls = 0;
-
+    public boolean isSystemReady() {
         try {
-            boolean hasMoreData = true;
+            boolean batchReady = batchProcessor.isSystemReady();
+            boolean bufferedReady = bufferedDataCollector != null;
+            boolean clientsReady = facebookApiClient != null && tikTokApiClient != null;
 
-            while (hasMoreData) {
-                FacebookApiResponse response = facebookApiClient.fetchOrders("", currentPage, pageSize);
-                totalApiCalls++;
-
-                if (response.getData() != null && !response.getData().getOrders().isEmpty()) {
-                    CollectedData batchData = new CollectedData();
-                    batchData.setFacebookOrders(response.getData().getOrders().stream()
-                            .map(order -> (Object) order)
-                            .toList());
-
-                    // Process immediately (11 DB operations per page)
-                    var result = batchProcessor.processCollectedData(batchData);
-                    totalProcessed += result.getSuccessCount();
-
-                    hasMoreData = batchData.getFacebookOrders().size() >= pageSize;
-                    currentPage++;
-                    Thread.sleep(1000);
-                } else {
-                    hasMoreData = false;
-                }
-            }
+            return batchReady && bufferedReady && clientsReady;
         } catch (Exception e) {
-            log.error("Page by page error: {}", e.getMessage(), e);
+            log.warn("System readiness check failed: {}", e.getMessage());
+            return false;
         }
-
-        summary.addPlatformCount("FACEBOOK", totalProcessed);
-        summary.setTotalApiCalls(totalApiCalls);
-        summary.setTotalDbOperations(totalApiCalls * 11); // 11 tables per page
-        summary.setEndTime(java.time.LocalDateTime.now());
-
-        log.info("Legacy processing: {} orders, {} API calls, {} DB ops, Duration: {}",
-                totalProcessed, totalApiCalls, summary.getTotalDbOperations(),
-                summary.getDurationFormatted());
-
-        return summary;
     }
 }

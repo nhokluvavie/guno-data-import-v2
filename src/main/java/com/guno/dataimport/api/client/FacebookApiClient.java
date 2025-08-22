@@ -48,6 +48,9 @@ public class FacebookApiClient {
     @Value("${api.facebook.source:facebook}")
     private String defaultSource;
 
+    @Value("${api.facebook.filter-date:insert}")
+    private String filterDate;
+
     /**
      * Fetch Facebook orders from API with default date (today)
      */
@@ -79,6 +82,7 @@ public class FacebookApiClient {
         params.put("page", page);
         params.put("limit", pageSize);
         params.put("source", source);
+        params.put("filter-date", filterDate);
 
         return callApiWithRetry(baseUrl, params);
     }

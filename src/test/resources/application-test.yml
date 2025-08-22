@@ -38,6 +38,7 @@ api:
     retry-delay-ms: 1000
     default-date: "2025-08-20"  # Configurable date for testing
     source: "facebook"       # Default source
+    filter-date: "insert"
 
   tiktok:
     base-url: https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search
@@ -50,6 +51,7 @@ api:
     retry-delay-ms: 1000
     default-date: "2025-08-20"
     source: "tiktok"
+    filter-date: "insert"
 
   # Common API settings for test
   common:

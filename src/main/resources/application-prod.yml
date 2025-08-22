@@ -73,6 +73,7 @@ api:
     retry-delay-ms: 2000
     default-date: ""            # Empty = use today's date
     source: "facebook"
+    filter-date: "insert"
 
   # Common API settings
   common:

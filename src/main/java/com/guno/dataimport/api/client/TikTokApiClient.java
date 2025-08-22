@@ -19,7 +19,7 @@ import java.util.Map;
 /**
  * TikTok API Client - Calls TikTok API to fetch order data
  * REUSES: FacebookApiResponse (same JSON structure)
- * PATTERN: 95% identical to FacebookApiClient
+ * PATTERN: Identical to FacebookApiClient
  */
 @Component
 @RequiredArgsConstructor
@@ -50,6 +50,9 @@ public class TikTokApiClient {
     @Value("${api.tiktok.source:tiktok}")
     private String defaultSource;
 
+    @Value("${api.facebook.filter-date:insert}")
+    private String filterDate;
+
     /**
      * Fetch TikTok orders from API with default date (today)
      */
@@ -60,52 +63,72 @@ public class TikTokApiClient {
     }
 
     /**
-     * Fetch TikTok orders with specific date and pagination
+     * Fetch orders with specific date
+     */
+    public FacebookApiResponse fetchOrders(String date) {
+        return fetchOrders(date, 1, defaultPageSize);
+    }
+
+    /**
+     * Fetch orders with pagination and date
      */
     public FacebookApiResponse fetchOrders(String date, int page, int pageSize) {
         return fetchOrders(date, page, pageSize, defaultSource);
     }
 
     /**
-     * Fetch TikTok orders with full parameters
+     * Fetch orders with full parameters
      */
     public FacebookApiResponse fetchOrders(String date, int page, int pageSize, String source) {
-        log.debug("Fetching TikTok orders - Date: {}, Page: {}, Size: {}, Source: {}",
-                date, page, pageSize, source);
-
         Map<String, Object> params = new HashMap<>();
         params.put("date", date);
         params.put("page", page);
         params.put("limit", pageSize);
-        if (source != null && !source.isEmpty()) {
-            params.put("source", source);
-        }
+        params.put("source", source);
+        params.put("filter-date", filterDate);
 
-        String url = buildUrlWithParams(baseUrl, params);
-        HttpEntity<Void> entity = createHttpEntity();
+        return callApiWithRetry(baseUrl, params);
+    }
 
+    /**
+     * Call API with retry mechanism
+     */
+    private FacebookApiResponse callApiWithRetry(String url, Map<String, Object> params) {
         Exception lastException = null;
+
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                log.debug("TikTok API call attempt {}/{} - URL: {}", attempt, maxRetries, url);
+                log.info("Calling TikTok API - attempt {}/{}, params: {}", attempt, maxRetries, params);
 
-                ResponseEntity<FacebookApiResponse> response = restTemplate.exchange(
-                        url, HttpMethod.GET, entity, FacebookApiResponse.class);
+                ResponseEntity<String> response = restTemplate.exchange(
+                        buildUrlWithParams(url, params),
+                        HttpMethod.GET,
+                        createHttpEntity(),
+                        String.class
+                );
 
-                FacebookApiResponse result = response.getBody();
-                if (result != null) {
-                    log.info("TikTok API success - Status: {}, Orders: {}",
-                            result.getStatus(), result.getOrderCount());
-                    return result;
+                // Debug raw response
+                log.debug("Raw TikTok API Response: {}", response.getBody());
+
+                // Parse manually to FacebookApiResponse
+                FacebookApiResponse apiResponse = objectMapper.readValue(response.getBody(), FacebookApiResponse.class);
+
+                if (apiResponse != null) {
+                    log.info("Successfully fetched {} TikTok orders for date: {}",
+                            apiResponse.getOrderCount(), params.get("date"));
+                    return apiResponse;
                 }
+
+                log.warn("TikTok API returned null response body");
 
             } catch (Exception e) {
                 lastException = e;
-                log.warn("TikTok API attempt {}/{} failed: {}", attempt, maxRetries, e.getMessage());
+                log.warn("TikTok API call failed - attempt {}/{}: {}",
+                        attempt, maxRetries, e.getMessage());
 
                 if (attempt < maxRetries) {
                     try {
-                        Thread.sleep(1000 * attempt); // Progressive backoff
+                        Thread.sleep(2000 * attempt); // Exponential backoff
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                         break;
@@ -123,6 +146,7 @@ public class TikTokApiClient {
      */
     public boolean isApiAvailable() {
         try {
+            // Use a simple API call to check availability
             String testDate = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
             FacebookApiResponse response = fetchOrders(testDate, 1, 1);
             return response.getStatus() != null && response.getStatus() == 200;
@@ -152,7 +176,7 @@ public class TikTokApiClient {
         params.forEach((key, value) ->
                 urlBuilder.append(key).append("=").append(value).append("&"));
 
-        return urlBuilder.substring(0, urlBuilder.length() - 1);
+        return urlBuilder.substring(0, urlBuilder.length() - 1); // Remove last &
     }
 
     private FacebookApiResponse createEmptyResponse() {

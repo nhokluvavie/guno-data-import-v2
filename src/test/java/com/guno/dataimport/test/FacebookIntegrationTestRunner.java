@@ -393,7 +393,7 @@ class FacebookIntegrationTestRunner {
         log.info("📊 Processing Results:");
         log.info("   - API Orders: {}", apiOrders);
         log.info("   - Duration: {}ms", duration);
-        log.info("   - DB Records: {}", summary.getTotalInsertedRecords());
+        log.info("   - DB Records: {}", summary.getTotalTableInserts());
 
         // Database verification
         log.info("📋 Database Verification:");

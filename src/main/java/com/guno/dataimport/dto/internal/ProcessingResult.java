@@ -42,4 +42,14 @@ public class ProcessingResult {
     public boolean isSuccess() {
         return failedCount == 0;
     }
+
+    public void merge(ProcessingResult other) {
+        if (other == null) return;
+
+        this.totalProcessed += other.totalProcessed;
+        this.successCount += other.successCount;
+        this.failedCount += other.failedCount;
+        this.processingTimeMs += other.processingTimeMs;
+        this.errors.addAll(other.errors);
+    }
 }

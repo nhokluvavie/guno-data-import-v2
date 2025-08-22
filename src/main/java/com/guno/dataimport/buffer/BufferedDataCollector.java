@@ -1,6 +1,12 @@
+// =============================================
+// COMPLETE BufferedDataCollector.java with TikTok Support
+// =============================================
+
 package com.guno.dataimport.buffer;
 
 import com.guno.dataimport.api.client.FacebookApiClient;
+import com.guno.dataimport.api.client.TikTokApiClient;  // ADD THIS
+import com.guno.dataimport.dto.internal.CollectedData;  // ADD THIS
 import com.guno.dataimport.dto.internal.ImportSummary;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
@@ -14,7 +20,8 @@ import java.util.HashMap;
 import java.util.List;
 
 /**
- * BufferedDataCollector - High-performance data collection with buffering
+ * BufferedDataCollector - High-performance multi-platform data collection with buffering
+ * ENHANCED: Now supports both Facebook and TikTok platforms
  */
 @Service
 @RequiredArgsConstructor
@@ -22,24 +29,18 @@ import java.util.List;
 public class BufferedDataCollector {
 
     private final FacebookApiClient facebookApiClient;
+    private final TikTokApiClient tikTokApiClient;  // ADD THIS
     private final BatchProcessor batchProcessor;
 
     /**
-     * Collect data with buffering for maximum performance
-     * @param date Target date for API calls (from yml config)
-     * @param bufferSize Number of orders to buffer before flush
-     * @param pageSize Number of orders per API call
-     * @return ImportSummary with detailed metrics (never null)
+     * EXISTING: Facebook-only buffered collection (backward compatibility)
      */
     public ImportSummary collectWithBuffer(String date, int bufferSize, int pageSize) {
-        log.info("🚀 Starting buffered collection - Date: '{}', Buffer: {}, PageSize: {}",
+        log.info("🚀 Starting Facebook buffered collection - Date: '{}', Buffer: {}, PageSize: {}",
                 date, bufferSize, pageSize);
 
-        // ALWAYS create summary first - never return null
         ImportSummary summary = ImportSummary.createWithDefaultTables();
-
         if (summary == null) {
-            log.error("❌ CRITICAL: ImportSummary.createWithDefaultTables() returned null!");
             summary = ImportSummary.builder()
                     .startTime(LocalDateTime.now())
                     .status("FAILED")
@@ -50,6 +51,204 @@ public class BufferedDataCollector {
         }
 
         List<Object> orderBuffer = new ArrayList<>(bufferSize);
+        int currentPage = 1;
+        int totalOrders = 0;
+        int apiCalls = 0;
+        boolean hasMoreData = true;
+
+        try {
+            while (hasMoreData) {
+                log.debug("🔄 Calling Facebook API - Page: {}, Date: '{}'", currentPage, date);
+
+                FacebookApiResponse response = facebookApiClient.fetchOrders(date, currentPage, pageSize);
+                apiCalls++;
+
+                if (response == null) {
+                    log.warn("Facebook API call returned null response - Page: {}", currentPage);
+                    break;
+                }
+
+                log.debug("Facebook API Response - Status: {}, Code: {}, Message: '{}'",
+                        response.getStatus(), response.getCode(), response.getMessage());
+
+                if (response.isSuccess() && response.getData() != null &&
+                        response.getData().getOrders() != null) {
+
+                    List<FacebookOrderDto> orders = response.getData().getOrders();
+                    log.debug("Received {} Facebook orders on page {}", orders.size(), currentPage);
+
+                    // Add to buffer
+                    orderBuffer.addAll(orders.stream().map(order -> (Object) order).toList());
+                    totalOrders += orders.size();
+
+                    // Flush buffer if full
+                    if (orderBuffer.size() >= bufferSize) {
+                        flushBuffer(orderBuffer, summary);
+                        orderBuffer.clear();
+                    }
+
+                    // Check if more data available
+                    hasMoreData = orders.size() >= pageSize;
+                    currentPage++;
+
+                } else {
+                    log.warn("Facebook API unsuccessful or no data - Status: {}, Message: '{}'",
+                            response.getStatus(), response.getMessage());
+                    hasMoreData = false;
+                }
+
+                if (currentPage > 100) {
+                    log.warn("Reached maximum page limit (100) for safety");
+                    break;
+                }
+            }
+
+            // Flush remaining orders
+            if (!orderBuffer.isEmpty()) {
+                flushBuffer(orderBuffer, summary);
+            }
+
+            summary.setTotalApiCalls(apiCalls);
+            summary.addPlatformCount("FACEBOOK", totalOrders);
+            summary.setEndTime(LocalDateTime.now());
+            summary.setStatus("SUCCESS");
+
+            log.info("✅ Facebook buffered collection completed - {} orders, {} API calls, Duration: {}",
+                    totalOrders, apiCalls, summary.getDurationFormatted());
+
+        } catch (Exception e) {
+            log.error("❌ Facebook buffered collection failed: {}", e.getMessage(), e);
+            summary.markFailed(e.getMessage());
+        }
+
+        return summary;
+    }
+
+    /**
+     * LEGACY: Backward compatibility method
+     */
+    public ImportSummary collectWithBuffer(int bufferSize, int pageSize) {
+        log.warn("Using legacy collectWithBuffer without date - will use API default");
+        return collectWithBuffer("", bufferSize, pageSize);
+    }
+
+    /**
+     * NEW: Single page data collection for all platforms
+     */
+    public CollectedData collectData() {
+        log.info("Collecting single page data from all platforms (Facebook + TikTok)");
+
+        CollectedData data = new CollectedData();
+
+        try {
+            // Collect Facebook data
+            log.debug("Collecting Facebook data...");
+            FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders("", 1, 100);
+
+            if (facebookResponse != null && facebookResponse.getData() != null &&
+                    facebookResponse.getData().getOrders() != null) {
+
+                data.setFacebookOrders(facebookResponse.getData().getOrders().stream()
+                        .map(order -> (Object) order)
+                        .toList());
+
+                log.info("Collected {} Facebook orders", data.getFacebookOrders().size());
+            } else {
+                log.warn("No Facebook orders collected");
+            }
+
+            // Collect TikTok data
+            log.debug("Collecting TikTok data...");
+            FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders("", 1, 100);
+
+            if (tikTokResponse != null && tikTokResponse.getData() != null &&
+                    tikTokResponse.getData().getOrders() != null) {
+
+                data.setTikTokOrders(tikTokResponse.getData().getOrders().stream()
+                        .map(order -> (Object) order)
+                        .toList());
+
+                log.info("Collected {} TikTok orders", data.getTikTokOrders().size());
+            } else {
+                log.warn("No TikTok orders collected");
+            }
+
+            log.info("Total collection: Facebook={}, TikTok={}, Total={}",
+                    data.getFacebookOrders().size(),
+                    data.getTikTokOrders().size(),
+                    data.getTotalOrders());
+
+        } catch (Exception e) {
+            log.error("Multi-platform data collection failed: {}", e.getMessage(), e);
+        }
+
+        return data;
+    }
+
+    /**
+     * NEW: Multi-platform buffered collection with enhanced buffer strategy
+     */
+    public CollectedData collectMultiPlatformData(int bufferSize) {
+        log.info("Collecting multi-platform data with buffer optimization - BufferSize: {}", bufferSize);
+
+        // For now, use simple single-page collection
+        // Can be enhanced later for true multi-platform buffering
+        return collectData();
+    }
+
+    /**
+     * NEW: Multi-platform buffered collection with full control
+     */
+    public ImportSummary collectMultiPlatformWithBuffer(String date, int bufferSize, int pageSize) {
+        log.info("🚀 Starting multi-platform buffered collection - Date: '{}', Buffer: {}, PageSize: {}",
+                date, bufferSize, pageSize);
+
+        ImportSummary summary = ImportSummary.createWithDefaultTables();
+        if (summary == null) {
+            summary = ImportSummary.builder()
+                    .startTime(LocalDateTime.now())
+                    .status("FAILED")
+                    .errorMessage("Failed to create summary")
+                    .platformCounts(new HashMap<>())
+                    .tableInsertCounts(new HashMap<>())
+                    .build();
+        }
+
+        try {
+            // Collect Facebook data
+            log.info("Collecting Facebook platform data...");
+            ImportSummary facebookSummary = collectPlatformData("FACEBOOK", date, bufferSize, pageSize);
+            summary.merge(facebookSummary);
+
+            // Collect TikTok data
+            log.info("Collecting TikTok platform data...");
+            ImportSummary tikTokSummary = collectPlatformData("TIKTOK", date, bufferSize, pageSize);
+            summary.merge(tikTokSummary);
+
+            summary.setEndTime(LocalDateTime.now());
+            summary.setStatus("SUCCESS");
+
+            log.info("✅ Multi-platform collection completed - Facebook: {}, TikTok: {}, Total Duration: {}",
+                    summary.getPlatformCount("FACEBOOK"),
+                    summary.getPlatformCount("TIKTOK"),
+                    summary.getDurationFormatted());
+
+        } catch (Exception e) {
+            log.error("❌ Multi-platform collection failed: {}", e.getMessage(), e);
+            summary.markFailed(e.getMessage());
+        }
+
+        return summary;
+    }
+
+    /**
+     * PRIVATE: Collect data from specific platform
+     */
+    private ImportSummary collectPlatformData(String platform, String date, int bufferSize, int pageSize) {
+        log.debug("Collecting {} platform data...", platform);
+
+        ImportSummary platformSummary = ImportSummary.createWithDefaultTables();
+        List<Object> orderBuffer = new ArrayList<>(bufferSize);
 
         int currentPage = 1;
         int totalOrders = 0;
@@ -58,111 +257,82 @@ public class BufferedDataCollector {
 
         try {
             while (hasMoreData) {
-                log.debug("🔄 Calling API - Page: {}, Date: '{}'", currentPage, date);
+                FacebookApiResponse response = null;
 
-                // Call Facebook API with configured date
-                FacebookApiResponse response = facebookApiClient.fetchOrders(date, currentPage, pageSize);
+                // Call appropriate API based on platform
+                if ("FACEBOOK".equals(platform)) {
+                    response = facebookApiClient.fetchOrders(date, currentPage, pageSize);
+                } else if ("TIKTOK".equals(platform)) {
+                    response = tikTokApiClient.fetchOrders(date, currentPage, pageSize);
+                }
+
                 apiCalls++;
 
                 if (response == null) {
-                    log.warn("API call returned null response - Page: {}", currentPage);
+                    log.warn("{} API call returned null response - Page: {}", platform, currentPage);
                     break;
                 }
 
-                // Log detailed response info for debugging
-                log.debug("API Response - Status: {}, Code: {}, Message: '{}'",
-                        response.getStatus(), response.getCode(), response.getMessage());
+                if (response.isSuccess() && response.getData() != null &&
+                        response.getData().getOrders() != null) {
 
-                // Check if API call was successful (status 1 seems to be success for this API)
-                if (response.getStatus() == null || response.getData() == null) {
-                    log.warn("API call failed or no data - Page: {}, Status: {}, HasData: {}",
-                            currentPage, response.getStatus(), response.getData() != null);
-                    break;
-                }
+                    List<FacebookOrderDto> orders = response.getData().getOrders();
+                    log.debug("Received {} {} orders on page {}", orders.size(), platform, currentPage);
 
-                // For this Facebook API, status = 1 appears to be success, not 200
-                if (response.getStatus() != 1) {
-                    log.warn("API returned non-success status - Page: {}, Status: {}, Message: '{}'",
-                            currentPage, response.getStatus(), response.getMessage());
-                    break;
-                }
+                    // Add to buffer
+                    orderBuffer.addAll(orders.stream().map(order -> (Object) order).toList());
+                    totalOrders += orders.size();
 
-                List<FacebookOrderDto> pageOrders = response.getData().getOrders();
-                if (pageOrders == null || pageOrders.isEmpty()) {
-                    log.info("No more orders available - stopping at page {}", currentPage);
-                    break;
-                }
+                    // Flush buffer if full
+                    if (orderBuffer.size() >= bufferSize) {
+                        flushPlatformBuffer(orderBuffer, platform, platformSummary);
+                        orderBuffer.clear();
+                    }
 
-                // Add to buffer (convert to Object for generic processing)
-                orderBuffer.addAll(pageOrders);
-                totalOrders += pageOrders.size();
+                    hasMoreData = orders.size() >= pageSize;
+                    currentPage++;
 
-                log.debug("Buffered {} orders from page {} (total buffered: {})",
-                        pageOrders.size(), currentPage, orderBuffer.size());
-
-                // Flush buffer when full
-                if (orderBuffer.size() >= bufferSize) {
-                    flushBuffer(orderBuffer, summary);
-                    orderBuffer.clear();
-                }
-
-                // Check if we got fewer orders than requested (last page)
-                if (pageOrders.size() < pageSize) {
+                } else {
                     hasMoreData = false;
                 }
 
-                currentPage++;
+                if (currentPage > 50) { // Lower limit for multi-platform
+                    log.warn("Reached platform page limit (50) for {}", platform);
+                    break;
+                }
             }
 
-            // Flush remaining orders in buffer
+            // Flush remaining orders
             if (!orderBuffer.isEmpty()) {
-                flushBuffer(orderBuffer, summary);
+                flushPlatformBuffer(orderBuffer, platform, platformSummary);
             }
 
-            // Update summary - ensure non-null values
-            summary.setTotalApiCalls(apiCalls);
-            if (summary.getPlatformCounts() == null) {
-                summary.setPlatformCounts(new HashMap<>());
-            }
-            summary.addPlatformCount("FACEBOOK", totalOrders);
-            summary.markCompleted();
+            platformSummary.setTotalApiCalls(apiCalls);
+            platformSummary.addPlatformCount(platform, totalOrders);
 
-            log.info("✅ Buffered collection completed - Orders: {}, API Calls: {}, Buffer Flushes: {}",
-                    totalOrders, apiCalls, (totalOrders > 0 ? (totalOrders + bufferSize - 1) / bufferSize : 0));
+            log.info("✅ {} collection completed - {} orders, {} API calls",
+                    platform, totalOrders, apiCalls);
 
         } catch (Exception e) {
-            log.error("❌ Buffered collection failed: {}", e.getMessage(), e);
-            summary.markFailed(e.getMessage());
+            log.error("❌ {} collection failed: {}", platform, e.getMessage(), e);
+            platformSummary.markFailed(e.getMessage());
         }
 
-        log.info("🔧 DEBUG: Returning summary: {}", summary != null ? "NOT NULL" : "NULL");
-        return summary; // Always return summary, never null
+        return platformSummary;
     }
 
     /**
-     * Legacy method for backward compatibility (without date parameter)
-     */
-    public ImportSummary collectWithBuffer(int bufferSize, int pageSize) {
-        log.warn("Using legacy collectWithBuffer without date - will use API default");
-        return collectWithBuffer("", bufferSize, pageSize);
-    }
-
-    /**
-     * Flush buffer to database using batch processor
+     * PRIVATE: Flush buffer to database using batch processor (Facebook only for now)
      */
     private void flushBuffer(List<Object> orderBuffer, ImportSummary summary) {
         if (orderBuffer.isEmpty()) return;
 
-        log.debug("🔄 Flushing {} orders to database", orderBuffer.size());
+        log.debug("🔄 Flushing {} Facebook orders to database", orderBuffer.size());
 
         try {
-            // Process orders through batch processor
             var result = batchProcessor.processFacebookOrders(orderBuffer);
 
-            // Track successful processing - simple approach
             int orderCount = orderBuffer.size();
-
-            // Add basic counts to summary (simple estimation for now)
             summary.addTableInsertCount("customers", orderCount);
             summary.addTableInsertCount("orders", orderCount);
             summary.addTableInsertCount("order_items", orderCount * 2);
@@ -175,11 +345,48 @@ public class BufferedDataCollector {
             summary.addTableInsertCount("order_status_detail", orderCount);
             summary.addTableInsertCount("status", 0);
 
-            // Track DB operations (11 tables per flush)
             summary.setTotalDbOperations(summary.getTotalDbOperations() + 11);
 
         } catch (Exception e) {
-            log.error("Failed to flush buffer: {}", e.getMessage(), e);
+            log.error("Failed to flush Facebook buffer: {}", e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /**
+     * PRIVATE: Flush platform-specific buffer to database
+     */
+    private void flushPlatformBuffer(List<Object> orderBuffer, String platform, ImportSummary summary) {
+        if (orderBuffer.isEmpty()) return;
+
+        log.debug("🔄 Flushing {} {} orders to database", orderBuffer.size(), platform);
+
+        try {
+            if ("FACEBOOK".equals(platform)) {
+                var result = batchProcessor.processFacebookOrders(orderBuffer);
+            } else if ("TIKTOK".equals(platform)) {
+                var result = batchProcessor.processTikTokOrders(orderBuffer);
+            }
+
+            int orderCount = orderBuffer.size();
+
+            // Add table counts (same for all platforms)
+            summary.addTableInsertCount("customers", orderCount);
+            summary.addTableInsertCount("orders", orderCount);
+            summary.addTableInsertCount("order_items", orderCount * 2);
+            summary.addTableInsertCount("products", orderCount);
+            summary.addTableInsertCount("geography_info", orderCount);
+            summary.addTableInsertCount("payment_info", orderCount);
+            summary.addTableInsertCount("shipping_info", orderCount);
+            summary.addTableInsertCount("processing_date_info", 1);
+            summary.addTableInsertCount("order_status", orderCount);
+            summary.addTableInsertCount("order_status_detail", orderCount);
+            summary.addTableInsertCount("status", 0);
+
+            summary.setTotalDbOperations(summary.getTotalDbOperations() + 11);
+
+        } catch (Exception e) {
+            log.error("Failed to flush {} buffer: {}", platform, e.getMessage(), e);
             throw e;
         }
     }

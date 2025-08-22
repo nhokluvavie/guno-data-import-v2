@@ -12,12 +12,13 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Facebook Mapper - Convert Facebook DTOs to Database Entities
- * IMPROVED: Better null handling, more accurate mapping, simplified logic
+ * TikTok Mapper - Convert TikTok DTOs to Database Entities
+ * REUSES: FacebookOrderDto, FacebookItemDto, FacebookCustomer (same JSON structure)
+ * PATTERN: Identical to FacebookMapper with TikTok-specific values
  */
 @Component
 @Slf4j
-public class FacebookMapper {
+public class TikTokMapper {
 
     private static final DateTimeFormatter[] DATE_FORMATTERS = {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
@@ -38,9 +39,9 @@ public class FacebookMapper {
                 .phoneHash(hashValue(customer.getPrimaryPhone()))
                 .emailHash(hashValue(customer.getPrimaryEmail()))
                 .gender(normalizeGender(customer.getGender()))
-                .customerSegment("FACEBOOK")
+                .customerSegment("TIKTOK")
                 .customerTier("STANDARD")
-                .acquisitionChannel("FACEBOOK")
+                .acquisitionChannel("TIKTOK")
                 .firstOrderDate(parseDateTime(customer.getInsertedAt()))
                 .lastOrderDate(parseDateTime(customer.getLastOrderAt()))
                 .totalOrders(safeInt(customer.getOrderCount()))
@@ -49,7 +50,7 @@ public class FacebookMapper {
                 .daysSinceFirstOrder(calculateDaysSince(customer.getInsertedAt()))
                 .daysSinceLastOrder(calculateDaysSince(customer.getLastOrderAt()))
                 .returnRate(calculateReturnRate(customer))
-                .preferredPlatform("FACEBOOK")
+                .preferredPlatform("TIKTOK")
                 .primaryShippingProvince(getProvinceName(order))
                 .loyaltyPoints(safeInt(customer.getRewardPoint()))
                 .referralCount(safeInt(customer.getCountReferrals()))
@@ -68,8 +69,8 @@ public class FacebookMapper {
         return Order.builder()
                 .orderId(order.getOrderId())
                 .customerId(order.getCustomer() != null ? order.getCustomer().getId() : null)
-                .shopId("FACEBOOK_SHOP")
-                .internalUuid("FB_" + order.getOrderId())
+                .shopId("TIKTOK_SHOP")
+                .internalUuid("TIKTOK_" + order.getOrderId())
                 .itemQuantity(calculateTotalQuantity(order.getItems()))
                 .totalItemsInOrder(safeSize(order.getItems()))
                 .grossRevenue(grossRevenue)
@@ -132,7 +133,7 @@ public class FacebookMapper {
         for (FacebookItemDto item : order.getItems()) {
             products.add(Product.builder()
                     .sku(getSku(item))
-                    .platformProductId("FB_" + item.getId())
+                    .platformProductId("TIKTOK_" + item.getId())
                     .productId(item.getProductId())
                     .variationId(item.getVariationId())
                     .barcode(getBarcode(item))
@@ -181,7 +182,7 @@ public class FacebookMapper {
                 .paymentKey(generateKey("PAY_" + order.getOrderId()))
                 .paymentMethod(isCod ? "COD" : "ONLINE")
                 .paymentCategory(isCod ? "CASH_ON_DELIVERY" : "DIGITAL_PAYMENT")
-                .paymentProvider("FACEBOOK_PAY")
+                .paymentProvider("TIKTOK_PAY")
                 .isCod(isCod)
                 .isPrepaid(!isCod)
                 .supportsRefund(true)
@@ -206,8 +207,8 @@ public class FacebookMapper {
                 .supportsCod(order.isCodOrder())
                 .coverageProvinces(getProvinceName(order))
                 // REQUIRED DEFAULTS (minimal)
-                .providerId("FACEBOOK")
-                .providerName("Facebook Marketplace")
+                .providerId("TIKTOK")
+                .providerName("TIKTOK Marketplace")
                 .providerType("MARKETPLACE")
                 // NULL/ZERO for unknown data
                 .weightBasedFee(0.0)
@@ -243,7 +244,7 @@ public class FacebookMapper {
         if (currentStatus != null) {
             Status status = Status.builder()
                     .statusKey((long) currentStatus)
-                    .platform("FACEBOOK")
+                    .platform("TIKTOK")
                     .platformStatusCode(currentStatus.toString())
                     .platformStatusName(statusName != null ? statusName : getStandardStatusName(currentStatus))
                     .standardStatusCode(mapToStandardStatus(currentStatus))
@@ -274,7 +275,7 @@ public class FacebookMapper {
                     .durationInPreviousStatusHours(0)
                     .transitionReason("ORDER_CREATED")
                     .transitionTrigger("SYSTEM")
-                    .changedBy("FACEBOOK_API")
+                    .changedBy("TIKTOK_API")
                     .isOnTimeTransition(true)
                     .isExpectedTransition(true)
                     .historyKey(generateKey("HIST_" + order.getOrderId()))

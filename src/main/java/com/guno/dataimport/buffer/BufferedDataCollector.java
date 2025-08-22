@@ -71,7 +71,7 @@ public class BufferedDataCollector {
                 log.debug("Facebook API Response - Status: {}, Code: {}, Message: '{}'",
                         response.getStatus(), response.getCode(), response.getMessage());
 
-                if (response.isSuccess() && response.getData() != null &&
+                if (response.getCode() == 200 && response.getData() != null &&
                         response.getData().getOrders() != null) {
 
                     List<FacebookOrderDto> orders = response.getData().getOrders();

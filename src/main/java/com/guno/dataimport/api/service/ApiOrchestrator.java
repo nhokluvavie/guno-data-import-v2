@@ -68,7 +68,7 @@ public class ApiOrchestrator {
         return ImportSummary.builder()
                 .totalApiCalls(2)
                 .totalDbOperations(result.getSuccessCount() * 11)
-                .duration(result.getProcessingTimeMs())
+                .processingTimeMs(result.getProcessingTimeMs())
                 .platformCounts(data.getPlatformCounts())
                 .build();
     }

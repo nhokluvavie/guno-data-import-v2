@@ -134,17 +134,19 @@ public class BatchProcessor {
             // Bulk upsert all entities via temp tables
             log.debug("Upserting Facebook entities via temp tables...");
 
+            // 1. Master data first
             customerRepository.bulkUpsert(customers);
             log.debug("✅ Facebook customers upserted via temp table");
 
+            statusRepository.bulkUpsert(statuses);
+            log.debug("✅ Facebook statuses upserted via temp table");
+
+            productRepository.bulkUpsert(products);            // ✅ MOVED UP
+            log.debug("✅ Facebook products upserted via temp table");
+
+// 2. Dependent tables
             orderRepository.bulkUpsert(orders);
             log.debug("✅ Facebook orders upserted via temp table");
-
-            orderItemRepository.bulkUpsert(orderItems);
-            log.debug("✅ Facebook order items upserted via temp table");
-
-            productRepository.bulkUpsert(products);
-            log.debug("✅ Facebook products upserted via temp table");
 
             geographyRepository.bulkUpsert(geography);
             log.debug("✅ Facebook geography upserted via temp table");
@@ -158,14 +160,12 @@ public class BatchProcessor {
             processingDateRepository.bulkUpsert(dates);
             log.debug("✅ Facebook processing dates upserted via temp table");
 
-            statusRepository.bulkUpsert(statuses);
-            log.debug("✅ Facebook statuses upserted via temp table");
+// 3. Multi-dependency tables last
+            orderItemRepository.bulkUpsert(orderItems);        // ✅ MOVED DOWN
+            log.debug("✅ Facebook order items upserted via temp table");
 
             orderStatusRepository.bulkUpsert(orderStatuses);
             log.debug("✅ Facebook order statuses upserted via temp table");
-
-            orderStatusDetailRepository.bulkUpsert(orderStatusDetails);
-            log.debug("✅ Facebook order status details upserted via temp table");
 
             result.setSuccessCount(facebookOrders.size() - result.getFailedCount());
             log.info("Successfully processed {} Facebook orders via TEMP TABLE strategy", result.getSuccessCount());
@@ -220,38 +220,38 @@ public class BatchProcessor {
             // Bulk upsert all entities via temp tables
             log.debug("Upserting TikTok entities via temp tables...");
 
+            // 1. Master data first
             customerRepository.bulkUpsert(customers);
-            log.debug("✅ TikTok customers upserted via temp table");
-
-            orderRepository.bulkUpsert(orders);
-            log.debug("✅ TikTok orders upserted via temp table");
-
-            orderItemRepository.bulkUpsert(orderItems);
-            log.debug("✅ TikTok order items upserted via temp table");
-
-            productRepository.bulkUpsert(products);
-            log.debug("✅ TikTok products upserted via temp table");
-
-            geographyRepository.bulkUpsert(geography);
-            log.debug("✅ TikTok geography upserted via temp table");
-
-            paymentRepository.bulkUpsert(payments);
-            log.debug("✅ TikTok payments upserted via temp table");
-
-            shippingRepository.bulkUpsert(shipping);
-            log.debug("✅ TikTok shipping upserted via temp table");
-
-            processingDateRepository.bulkUpsert(dates);
-            log.debug("✅ TikTok processing dates upserted via temp table");
+            log.debug("✅ Facebook customers upserted via temp table");
 
             statusRepository.bulkUpsert(statuses);
-            log.debug("✅ TikTok statuses upserted via temp table");
+            log.debug("✅ Facebook statuses upserted via temp table");
+
+            productRepository.bulkUpsert(products);            // ✅ MOVED UP
+            log.debug("✅ Facebook products upserted via temp table");
+
+// 2. Dependent tables
+            orderRepository.bulkUpsert(orders);
+            log.debug("✅ Facebook orders upserted via temp table");
+
+            geographyRepository.bulkUpsert(geography);
+            log.debug("✅ Facebook geography upserted via temp table");
+
+            paymentRepository.bulkUpsert(payments);
+            log.debug("✅ Facebook payments upserted via temp table");
+
+            shippingRepository.bulkUpsert(shipping);
+            log.debug("✅ Facebook shipping upserted via temp table");
+
+            processingDateRepository.bulkUpsert(dates);
+            log.debug("✅ Facebook processing dates upserted via temp table");
+
+// 3. Multi-dependency tables last
+            orderItemRepository.bulkUpsert(orderItems);        // ✅ MOVED DOWN
+            log.debug("✅ Facebook order items upserted via temp table");
 
             orderStatusRepository.bulkUpsert(orderStatuses);
-            log.debug("✅ TikTok order statuses upserted via temp table");
-
-            orderStatusDetailRepository.bulkUpsert(orderStatusDetails);
-            log.debug("✅ TikTok order status details upserted via temp table");
+            log.debug("✅ Facebook order statuses upserted via temp table");
 
             result.setSuccessCount(tikTokOrders.size() - result.getFailedCount());
             log.info("Successfully processed {} TikTok orders via TEMP TABLE strategy", result.getSuccessCount());

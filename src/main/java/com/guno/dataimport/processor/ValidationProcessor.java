@@ -26,16 +26,20 @@ public class ValidationProcessor {
             return errors;
         }
 
-        log.info("Validating collected data - Facebook: {}, TikTok: {}, Total: {}",
+        log.info("Validating collected data - Facebook: {}, TikTok: {}, Shopee: {}, Total: {}",
                 collectedData.getFacebookOrders().size(),
                 collectedData.getTikTokOrders().size(),
+                collectedData.getShopeeOrders().size(),
                 collectedData.getTotalOrders());
 
         // Validate Facebook orders
-        errors.addAll(validateFacebookOrders(collectedData.getFacebookOrders()));
+        errors.addAll(validateFacebookOrders(collectedData.getFacebookOrders(), "FACEBOOK"));
 
         // Validate TikTok orders (REUSES Facebook validation logic!)
         errors.addAll(validateTikTokOrders(collectedData.getTikTokOrders()));
+
+        // Validate Shopee orders (REUSES Facebook validation logic!)
+        errors.addAll(validateShopeeOrders(collectedData.getShopeeOrders()));
 
         log.info("Validation completed with {} errors", errors.size());
         return errors;
@@ -44,7 +48,7 @@ public class ValidationProcessor {
     /**
      * Validate Facebook orders
      */
-    private List<ErrorReport> validateFacebookOrders(List<Object> facebookOrderObjects) {
+    private List<ErrorReport> validateFacebookOrders(List<Object> facebookOrderObjects, String platform) {
         List<ErrorReport> errors = new ArrayList<>();
 
         if (facebookOrderObjects == null || facebookOrderObjects.isEmpty()) {
@@ -59,7 +63,7 @@ public class ValidationProcessor {
                 Object orderObj = facebookOrderObjects.get(i);
 
                 if (!(orderObj instanceof FacebookOrderDto)) {
-                    errors.add(createValidationError("FACEBOOK_ORDER", String.valueOf(i),
+                    errors.add(createValidationError(platform + "_ORDER", String.valueOf(i),
                             "Invalid order type: " + orderObj.getClass().getSimpleName()));
                     continue;
                 }
@@ -68,7 +72,7 @@ public class ValidationProcessor {
                 errors.addAll(validateFacebookOrder(order));
 
             } catch (Exception e) {
-                errors.add(createValidationError("FACEBOOK_ORDER", String.valueOf(i),
+                errors.add(createValidationError(platform + "_ORDER", String.valueOf(i),
                         "Validation error: " + e.getMessage()));
             }
         }
@@ -85,7 +89,19 @@ public class ValidationProcessor {
         log.info("Validating {} TikTok orders", tikTokOrderObjects.size());
 
         // REUSE: Same validation logic as Facebook (same JSON structure)
-        return validateFacebookOrders(tikTokOrderObjects);
+        return validateFacebookOrders(tikTokOrderObjects, "TIKTOK");
+    }
+
+    private List<ErrorReport> validateShopeeOrders(List<Object> shopeeOrderObjects) {
+        if (shopeeOrderObjects == null || shopeeOrderObjects.isEmpty()) {
+            log.info("No Shopee orders to validate");
+            return new ArrayList<>();
+        }
+
+        log.info("Validating {} Shopee orders", shopeeOrderObjects.size());
+
+        // REUSE: Same validation logic as Facebook (same JSON structure)
+        return validateFacebookOrders(shopeeOrderObjects, "SHOPEE");
     }
 
     /**

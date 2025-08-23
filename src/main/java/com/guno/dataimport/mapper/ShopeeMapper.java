@@ -1,10 +1,13 @@
 package com.guno.dataimport.mapper;
 
-import com.guno.dataimport.dto.platform.facebook.*;
+import com.guno.dataimport.dto.platform.facebook.FacebookCustomer;
+import com.guno.dataimport.dto.platform.facebook.FacebookItemDto;
+import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
 import com.guno.dataimport.entity.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -13,14 +16,14 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * TikTok Mapper - Convert TikTok DTOs to Database Entities
- * REUSES: FacebookOrderDto, FacebookItemDto, FacebookCustomer (same JSON structure)
- * PATTERN: Identical to FacebookMapper with TikTok-specific values
+ * Shopee Mapper - Convert Facebook DTOs to Database Entities
+ * IMPROVED: Better null handling, more accurate mapping, simplified logic
  */
 @Component
 @Slf4j
-public class TikTokMapper {
-    @Value("${api.tiktok.default-date:}")
+public class ShopeeMapper {
+
+    @Value("${api.shopee.default-date:}")
     private String defaultDate;
 
     private static final DateTimeFormatter[] DATE_FORMATTERS = {
@@ -42,9 +45,9 @@ public class TikTokMapper {
                 .phoneHash(hashValue(customer.getPrimaryPhone()))
                 .emailHash(hashValue(customer.getPrimaryEmail()))
                 .gender(normalizeGender(customer.getGender()))
-                .customerSegment("TIKTOK")
+                .customerSegment("SHOPEE")
                 .customerTier("STANDARD")
-                .acquisitionChannel("TIKTOK")
+                .acquisitionChannel("SHOPEE")
                 .firstOrderDate(parseDateTime(customer.getInsertedAt()))
                 .lastOrderDate(parseDateTime(customer.getLastOrderAt()))
                 .totalOrders(safeInt(customer.getOrderCount()))
@@ -53,7 +56,7 @@ public class TikTokMapper {
                 .daysSinceFirstOrder(calculateDaysSince(customer.getInsertedAt()))
                 .daysSinceLastOrder(calculateDaysSince(customer.getLastOrderAt()))
                 .returnRate(calculateReturnRate(customer))
-                .preferredPlatform("TIKTOK")
+                .preferredPlatform("SHOPEE")
                 .primaryShippingProvince(getProvinceName(order))
                 .loyaltyPoints(safeInt(customer.getRewardPoint()))
                 .referralCount(safeInt(customer.getCountReferrals()))
@@ -72,8 +75,8 @@ public class TikTokMapper {
         return Order.builder()
                 .orderId(order.getOrderId())
                 .customerId(order.getCustomer() != null ? order.getCustomer().getId() : null)
-                .shopId("TIKTOK_SHOP")
-                .internalUuid("TIKTOK_" + order.getOrderId())
+                .shopId("SHOPEE_SHOP")
+                .internalUuid("SP_" + order.getOrderId())
                 .itemQuantity(calculateTotalQuantity(order.getItems()))
                 .totalItemsInOrder(safeSize(order.getItems()))
                 .grossRevenue(grossRevenue)
@@ -117,7 +120,7 @@ public class TikTokMapper {
             items.add(OrderItem.builder()
                     .orderId(order.getOrderId())
                     .sku(getSku(item))
-                    .platformProductId("TIKTOK_" + item.getId())
+                    .platformProductId("SP_" + item.getId())
                     .quantity(qty)
                     .unitPrice(price)
                     .totalPrice(price * qty)
@@ -136,7 +139,7 @@ public class TikTokMapper {
         for (FacebookItemDto item : order.getItems()) {
             products.add(Product.builder()
                     .sku(getSku(item))
-                    .platformProductId("TIKTOK_" + item.getId())
+                    .platformProductId("SP_" + item.getId())
                     .productId(item.getProductId())
                     .variationId(item.getVariationId())
                     .barcode(getBarcode(item))
@@ -185,7 +188,7 @@ public class TikTokMapper {
                 .paymentKey(generateKey("PAY_" + order.getOrderId()))
                 .paymentMethod(isCod ? "COD" : "ONLINE")
                 .paymentCategory(isCod ? "CASH_ON_DELIVERY" : "DIGITAL_PAYMENT")
-                .paymentProvider("TIKTOK_PAY")
+                .paymentProvider("SHOPEE_PAY")
                 .isCod(isCod)
                 .isPrepaid(!isCod)
                 .supportsRefund(true)
@@ -210,8 +213,8 @@ public class TikTokMapper {
                 .supportsCod(order.isCodOrder())
                 .coverageProvinces(getProvinceName(order))
                 // REQUIRED DEFAULTS (minimal)
-                .providerId("TIKTOK")
-                .providerName("TIKTOK Marketplace")
+                .providerId("SHOPEE")
+                .providerName("Shopee Marketplace")
                 .providerType("MARKETPLACE")
                 // NULL/ZERO for unknown data
                 .weightBasedFee(0.0)
@@ -247,7 +250,7 @@ public class TikTokMapper {
         if (currentStatus != null) {
             Status status = Status.builder()
                     .statusKey((long) currentStatus)
-                    .platform("TIKTOK")
+                    .platform("SHOPEE")
                     .platformStatusCode(currentStatus.toString())
                     .platformStatusName(statusName != null ? statusName : getStandardStatusName(currentStatus))
                     .standardStatusCode(mapToStandardStatus(currentStatus))
@@ -278,7 +281,7 @@ public class TikTokMapper {
                     .durationInPreviousStatusHours(0)
                     .transitionReason("ORDER_CREATED")
                     .transitionTrigger("SYSTEM")
-                    .changedBy("TIKTOK_API")
+                    .changedBy("SHOPEE_API")
                     .isOnTimeTransition(true)
                     .isExpectedTransition(true)
                     .historyKey(generateKey("HIST_" + order.getOrderId()))

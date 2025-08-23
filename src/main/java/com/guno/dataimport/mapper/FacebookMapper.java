@@ -3,6 +3,7 @@ package com.guno.dataimport.mapper;
 import com.guno.dataimport.dto.platform.facebook.*;
 import com.guno.dataimport.entity.*;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -18,6 +19,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component
 @Slf4j
 public class FacebookMapper {
+
+    @Value("${api.facebook.default-date:}")
+    private String defaultDate;
 
     private static final DateTimeFormatter[] DATE_FORMATTERS = {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
@@ -333,7 +337,8 @@ public class FacebookMapper {
         return ProcessingDateInfo.builder()
                 .orderId(order.getOrderId())
                 .dateKey(generateKey(createdAt.toString()))
-                .fullDate(createdAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")))
+//                .fullDate(createdAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")))
+                .fullDate(defaultDate)
                 .dayOfWeek(createdAt.getDayOfWeek().getValue())
                 .dayOfWeekName(createdAt.getDayOfWeek().toString())
                 .dayOfMonth(createdAt.getDayOfMonth())

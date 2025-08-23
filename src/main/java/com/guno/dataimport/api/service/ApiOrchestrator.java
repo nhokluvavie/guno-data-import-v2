@@ -1,6 +1,7 @@
 package com.guno.dataimport.api.service;
 
 import com.guno.dataimport.api.client.FacebookApiClient;
+import com.guno.dataimport.api.client.ShopeeApiClient;
 import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.buffer.BufferedDataCollector;
 import com.guno.dataimport.dto.internal.CollectedData;
@@ -20,6 +21,7 @@ public class ApiOrchestrator {
 
     private final FacebookApiClient facebookApiClient;
     private final TikTokApiClient tikTokApiClient;
+    private final ShopeeApiClient shopeeApiClient;
     private final BatchProcessor batchProcessor;
     private final BufferedDataCollector bufferedDataCollector;
 
@@ -80,10 +82,11 @@ public class ApiOrchestrator {
     public boolean areApisAvailable() {
         boolean facebookAvailable = facebookApiClient.isApiAvailable();
         boolean tikTokAvailable = tikTokApiClient.isApiAvailable();
+        boolean shopeeAvailable = shopeeApiClient.isApiAvailable();
 
-        log.info("API Availability Check - Facebook: {}, TikTok: {}", facebookAvailable, tikTokAvailable);
+        log.info("API Availability Check - Facebook: {}, TikTok: {}, Shopee: {}", facebookAvailable, tikTokAvailable, shopeeAvailable);
 
-        return facebookAvailable || tikTokAvailable;
+        return facebookAvailable || tikTokAvailable || shopeeAvailable;
     }
 
     public boolean isFacebookApiAvailable() {
@@ -92,6 +95,10 @@ public class ApiOrchestrator {
 
     public boolean isTikTokApiAvailable() {
         return tikTokApiClient.isApiAvailable();
+    }
+
+    public boolean isShopeeApiAvailable() {
+        return shopeeApiClient.isApiAvailable();
     }
 
     public void shutdown() {
@@ -121,9 +128,18 @@ public class ApiOrchestrator {
                 log.info("Collected {} TikTok orders", data.getTikTokOrders().size());
             }
 
-            log.info("Total multi-platform collection: Facebook={}, TikTok={}, Total={}",
+            FacebookApiResponse shopeeResponse = shopeeApiClient.fetchOrders("", 1, 100);
+            if (shopeeResponse.getData() != null && shopeeResponse.getData().getOrders() != null) {
+                data.setShopeeOrders(shopeeResponse.getData().getOrders().stream()
+                        .map(order -> (Object) order)
+                        .toList());
+                log.info("Collected {} Shopee orders", data.getShopeeOrders().size());
+            }
+
+            log.info("Total multi-platform collection: Facebook={}, TikTok={}, Shopee={}, Total={}",
                     data.getFacebookOrders().size(),
                     data.getTikTokOrders().size(),
+                    data.getShopeeOrders().size(),
                     data.getTotalOrders());
 
         } catch (Exception e) {
@@ -140,9 +156,10 @@ public class ApiOrchestrator {
 
     public String getProcessingStats() {
         return String.format(
-                "ApiOrchestrator: Facebook API=%s, TikTok API=%s, Executor=%s",
+                "ApiOrchestrator: Facebook API=%s, TikTok API=%s, Shopee API=%s, Executor=%s",
                 isFacebookApiAvailable() ? "Available" : "Unavailable",
                 isTikTokApiAvailable() ? "Available" : "Unavailable",
+                isShopeeApiAvailable() ? "Available" : "Unavailable",
                 executorService.isShutdown() ? "Shutdown" : "Active"
         );
     }
@@ -151,7 +168,7 @@ public class ApiOrchestrator {
         try {
             boolean batchReady = batchProcessor.isSystemReady();
             boolean bufferedReady = bufferedDataCollector != null;
-            boolean clientsReady = facebookApiClient != null && tikTokApiClient != null;
+            boolean clientsReady = facebookApiClient != null && tikTokApiClient != null && shopeeApiClient != null;
 
             return batchReady && bufferedReady && clientsReady;
         } catch (Exception e) {

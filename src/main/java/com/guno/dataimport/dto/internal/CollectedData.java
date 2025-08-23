@@ -35,12 +35,14 @@ public class CollectedData {
         Map<String, Integer> counts = new HashMap<>();
         counts.put("FACEBOOK", facebookOrders != null ? facebookOrders.size() : 0);
         counts.put("TIKTOK", tikTokOrders != null ? tikTokOrders.size() : 0);
+        counts.put("SHOPEE", shopeeOrders != null ? shopeeOrders.size() : 0);
         return counts;
     }
 
     public int getTotalOrders() {
         int facebook = facebookOrders != null ? facebookOrders.size() : 0;
         int tiktok = tikTokOrders != null ? tikTokOrders.size() : 0;
-        return facebook + tiktok;
+        int shopee = shopeeOrders != null ? shopeeOrders.size() : 0;
+        return facebook + tiktok + shopee;
     }
 }

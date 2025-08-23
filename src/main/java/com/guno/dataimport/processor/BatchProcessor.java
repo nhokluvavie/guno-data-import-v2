@@ -6,6 +6,7 @@ import com.guno.dataimport.dto.internal.ErrorReport;
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
 import com.guno.dataimport.entity.*;
 import com.guno.dataimport.mapper.FacebookMapper;
+import com.guno.dataimport.mapper.ShopeeMapper;
 import com.guno.dataimport.mapper.TikTokMapper;
 import com.guno.dataimport.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -19,7 +20,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * BatchProcessor - ENHANCED: Multi-platform support with TikTok integration
+ * BatchProcessor - ENHANCED: Multi-platform support with TikTok, Shopee integration
  * PATTERN: Pure temp table approach, NO DELETE operations
  */
 @Service
@@ -29,6 +30,7 @@ public class BatchProcessor {
 
     private final FacebookMapper facebookMapper;
     private final TikTokMapper tikTokMapper;  // NEW: TikTok mapper
+    private final ShopeeMapper shopeeMapper;  // NEW: Shopee mapper
 
     private final CustomerRepository customerRepository;
     private final OrderRepository orderRepository;
@@ -54,9 +56,10 @@ public class BatchProcessor {
         long startTime = System.currentTimeMillis();
         ProcessingResult result = ProcessingResult.builder().build();
 
-        log.info("Processing multi-platform data - Facebook: {}, TikTok: {}, Total: {}",
+        log.info("Processing multi-platform data - Facebook: {}, TikTok: {}, Shopee: {}, Total: {}",
                 collectedData.getFacebookOrders().size(),
                 collectedData.getTikTokOrders().size(),
+                collectedData.getShopeeOrders().size(),
                 collectedData.getTotalOrders());
 
         try {
@@ -76,6 +79,15 @@ public class BatchProcessor {
                 result.merge(tikTokResult);
                 log.info("TikTok processing completed: {} success, {} failed",
                         tikTokResult.getSuccessCount(), tikTokResult.getFailedCount());
+            }
+
+            // Process Shopee orders - REUSES FacebookOrderDto structure!
+            if (!collectedData.getShopeeOrders().isEmpty()) {
+                log.info("Processing {} Shopee orders...", collectedData.getShopeeOrders().size());
+                ProcessingResult shopeeResult = processShopeeOrders(collectedData.getShopeeOrders());
+                result.merge(shopeeResult);
+                log.info("Shopee processing completed: {} success, {} failed",
+                        shopeeResult.getSuccessCount(), shopeeResult.getFailedCount());
             }
 
             long duration = System.currentTimeMillis() - startTime;
@@ -166,6 +178,9 @@ public class BatchProcessor {
 
             orderStatusRepository.bulkUpsert(orderStatuses);
             log.debug("✅ Facebook order statuses upserted via temp table");
+
+            orderStatusDetailRepository.bulkUpsert(orderStatusDetails);
+            log.debug("✅ Facebook order statuses detail upserted via temp table");
 
             result.setSuccessCount(facebookOrders.size() - result.getFailedCount());
             log.info("Successfully processed {} Facebook orders via TEMP TABLE strategy", result.getSuccessCount());
@@ -263,6 +278,95 @@ public class BatchProcessor {
             log.error("TikTok TEMP TABLE processing error: {}", e.getMessage(), e);
             result.setFailedCount(tikTokOrders.size());
             result.getErrors().add(ErrorReport.of("TIKTOK_ORDERS", "BATCH", "TIKTOK", e));
+        }
+
+        return result;
+    }
+
+    /**
+     * TIKTOK: Process TikTok orders using TikTokMapper
+     */
+    @Transactional
+    public ProcessingResult processShopeeOrders(List<Object> shopeeOrderObjects) {
+        ProcessingResult result = ProcessingResult.builder().build();
+
+        if (shopeeOrderObjects == null || shopeeOrderObjects.isEmpty()) {
+            return result;
+        }
+
+        // Convert objects to FacebookOrderDto (Shopee reuses same structure!)
+        List<FacebookOrderDto> shopeeOrders = shopeeOrderObjects.stream()
+                .filter(obj -> obj instanceof FacebookOrderDto)
+                .map(obj -> (FacebookOrderDto) obj)
+                .toList();
+
+        if (shopeeOrders.isEmpty()) {
+            log.warn("No valid Shopee order objects found in input");
+            return result;
+        }
+
+        log.info("Processing {} Shopee orders with TEMP TABLE strategy", shopeeOrders.size());
+
+        try {
+            // Map entities using ShopeeMapper
+            List<Customer> customers = mapShopeeCustomers(shopeeOrders, result);
+            List<Order> orders = mapShopeeOrders(shopeeOrders, result);
+            List<OrderItem> orderItems = mapShopeeOrderItems(shopeeOrders, result);
+            List<Product> products = mapShopeeProducts(shopeeOrders, result);
+            List<GeographyInfo> geography = mapShopeeGeography(shopeeOrders, result);
+            List<PaymentInfo> payments = mapShopeePayments(shopeeOrders, result);
+            List<ShippingInfo> shipping = mapShopeeShipping(shopeeOrders, result);
+            List<ProcessingDateInfo> dates = mapShopeeDates(shopeeOrders, result);
+            List<Status> statuses = mapShopeeStatuses(shopeeOrders, result);
+            List<OrderStatus> orderStatuses = mapShopeeOrderStatuses(shopeeOrders, result);
+            List<OrderStatusDetail> orderStatusDetails = mapShopeeOrderStatusDetails(shopeeOrders, result);
+
+            // FIXED: Bulk upsert in CORRECT ORDER to avoid foreign key violations
+            log.debug("Upserting Shopee entities via temp tables...");
+
+            // 1. Master data first (no dependencies)
+            customerRepository.bulkUpsert(customers);
+            log.debug("✅ Shopee customers upserted via temp table");
+
+            statusRepository.bulkUpsert(statuses);
+            log.debug("✅ Shopee statuses upserted via temp table");
+
+            productRepository.bulkUpsert(products);            // ✅ MOVED UP - MUST BE BEFORE orderItems
+            log.debug("✅ Shopee products upserted via temp table");
+
+            // 2. Dependent tables (depend on customers, statuses, products)
+            orderRepository.bulkUpsert(orders);               // ✅ MUST BE BEFORE orderItems
+            log.debug("✅ Shopee orders upserted via temp table");
+
+            geographyRepository.bulkUpsert(geography);
+            log.debug("✅ Shopee geography upserted via temp table");
+
+            paymentRepository.bulkUpsert(payments);
+            log.debug("✅ Shopee payments upserted via temp table");
+
+            shippingRepository.bulkUpsert(shipping);
+            log.debug("✅ Shopee shipping upserted via temp table");
+
+            processingDateRepository.bulkUpsert(dates);
+            log.debug("✅ Shopee processing dates upserted via temp table");
+
+            // 3. Multi-dependency tables last (depend on orders + products + statuses)
+            orderItemRepository.bulkUpsert(orderItems);        // ✅ MOVED DOWN - AFTER products + orders
+            log.debug("✅ Shopee order items upserted via temp table");
+
+            orderStatusRepository.bulkUpsert(orderStatuses);   // ✅ AFTER orders + statuses
+            log.debug("✅ Shopee order statuses upserted via temp table");
+
+            orderStatusDetailRepository.bulkUpsert(orderStatusDetails); // ✅ AFTER orderStatuses
+            log.debug("✅ Shopee order status details upserted via temp table");
+
+            result.setSuccessCount(shopeeOrders.size() - result.getFailedCount());
+            log.info("Successfully processed {} Shopee orders via TEMP TABLE strategy", result.getSuccessCount());
+
+        } catch (Exception e) {
+            log.error("Shopee TEMP TABLE processing error: {}", e.getMessage(), e);
+            result.setFailedCount(shopeeOrders.size());
+            result.getErrors().add(ErrorReport.of("SHOPEE_ORDERS", "BATCH", "SHOPEE", e));
         }
 
         return result;
@@ -546,8 +650,10 @@ public class BatchProcessor {
         return orders.stream()
                 .map(order -> {
                     try {
-                        return tikTokMapper.mapToProcessingDateInfo(order);
+                        ProcessingDateInfo date = tikTokMapper.mapToProcessingDateInfo(order);
+                        return date;
                     } catch (Exception e) {
+                        log.error("  ❌ Failed mapping order {}: {}", order.getOrderId(), e.getMessage());
                         result.getErrors().add(ErrorReport.of("TIKTOK_DATE", order.getOrderId(), "TIKTOK", e));
                         return null;
                     }
@@ -587,6 +693,168 @@ public class BatchProcessor {
                 allDetails.addAll(tikTokMapper.mapToOrderStatusDetail(order));
             } catch (Exception e) {
                 result.getErrors().add(ErrorReport.of("TIKTOK_ORDER_STATUS_DETAIL", order.getOrderId(), "TIKTOK", e));
+            }
+        }
+        return allDetails;
+    }
+
+    // ================================
+    // SHOPEE MAPPING METHODS
+    // ================================
+
+    private List<Customer> mapShopeeCustomers(List<FacebookOrderDto> orders, ProcessingResult result) {
+        return orders.stream()
+                .map(order -> {
+                    try {
+                        return shopeeMapper.mapToCustomer(order);
+                    } catch (Exception e) {
+                        result.getErrors().add(ErrorReport.of("SHOPEE_CUSTOMER", order.getOrderId(), "SHOPEE", e));
+                        return null;
+                    }
+                })
+                .filter(customer -> customer != null)
+                .collect(Collectors.toMap(
+                        Customer::getCustomerId,
+                        customer -> customer,
+                        (existing, replacement) -> existing))
+                .values()
+                .stream()
+                .toList();
+    }
+
+    private List<Order> mapShopeeOrders(List<FacebookOrderDto> orders, ProcessingResult result) {
+        return orders.stream()
+                .map(order -> {
+                    try {
+                        return shopeeMapper.mapToOrder(order);
+                    } catch (Exception e) {
+                        result.getErrors().add(ErrorReport.of("SHOPEE_ORDER", order.getOrderId(), "SHOPEE", e));
+                        return null;
+                    }
+                })
+                .filter(order -> order != null)
+                .toList();
+    }
+
+    private List<OrderItem> mapShopeeOrderItems(List<FacebookOrderDto> orders, ProcessingResult result) {
+        List<OrderItem> allItems = new ArrayList<>();
+        for (FacebookOrderDto order : orders) {
+            try {
+                allItems.addAll(shopeeMapper.mapToOrderItems(order));
+            } catch (Exception e) {
+                result.getErrors().add(ErrorReport.of("SHOPEE_ORDER_ITEMS", order.getOrderId(), "SHOPEE", e));
+            }
+        }
+        return allItems;
+    }
+
+    private List<Product> mapShopeeProducts(List<FacebookOrderDto> orders, ProcessingResult result) {
+        List<Product> allProducts = new ArrayList<>();
+        for (FacebookOrderDto order : orders) {
+            try {
+                allProducts.addAll(shopeeMapper.mapToProducts(order));
+            } catch (Exception e) {
+                result.getErrors().add(ErrorReport.of("SHOPEE_PRODUCTS", order.getOrderId(), "SHOPEE", e));
+            }
+        }
+        // Remove duplicates
+        return allProducts.stream()
+                .collect(Collectors.toMap(
+                        product -> product.getSku() + "_" + product.getPlatformProductId(),
+                        product -> product,
+                        (existing, replacement) -> existing))
+                .values()
+                .stream()
+                .toList();
+    }
+
+    private List<GeographyInfo> mapShopeeGeography(List<FacebookOrderDto> orders, ProcessingResult result) {
+        return orders.stream()
+                .map(order -> {
+                    try {
+                        return shopeeMapper.mapToGeographyInfo(order);
+                    } catch (Exception e) {
+                        result.getErrors().add(ErrorReport.of("SHOPEE_GEOGRAPHY", order.getOrderId(), "SHOPEE", e));
+                        return null;
+                    }
+                })
+                .filter(geo -> geo != null)
+                .toList();
+    }
+
+    private List<PaymentInfo> mapShopeePayments(List<FacebookOrderDto> orders, ProcessingResult result) {
+        return orders.stream()
+                .map(order -> {
+                    try {
+                        return shopeeMapper.mapToPaymentInfo(order);
+                    } catch (Exception e) {
+                        result.getErrors().add(ErrorReport.of("SHOPEE_PAYMENT", order.getOrderId(), "SHOPEE", e));
+                        return null;
+                    }
+                })
+                .filter(payment -> payment != null)
+                .toList();
+    }
+
+    private List<ShippingInfo> mapShopeeShipping(List<FacebookOrderDto> orders, ProcessingResult result) {
+        return orders.stream()
+                .map(order -> {
+                    try {
+                        return shopeeMapper.mapToShippingInfo(order);
+                    } catch (Exception e) {
+                        result.getErrors().add(ErrorReport.of("SHOPEE_SHIPPING", order.getOrderId(), "SHOPEE", e));
+                        return null;
+                    }
+                })
+                .filter(shipping -> shipping != null)
+                .toList();
+    }
+
+    private List<ProcessingDateInfo> mapShopeeDates(List<FacebookOrderDto> orders, ProcessingResult result) {
+        return orders.stream()
+                .map(order -> {
+                    try {
+                        return shopeeMapper.mapToProcessingDateInfo(order);
+                    } catch (Exception e) {
+                        result.getErrors().add(ErrorReport.of("SHOPEE_DATE", order.getOrderId(), "SHOPEE", e));
+                        return null;
+                    }
+                })
+                .filter(date -> date != null)
+                .toList();
+    }
+
+    private List<Status> mapShopeeStatuses(List<FacebookOrderDto> orders, ProcessingResult result) {
+        List<Status> allStatuses = new ArrayList<>();
+        for (FacebookOrderDto order : orders) {
+            try {
+                allStatuses.addAll(shopeeMapper.mapToStatus(order));
+            } catch (Exception e) {
+                result.getErrors().add(ErrorReport.of("SHOPEE_STATUS", order.getOrderId(), "SHOPEE", e));
+            }
+        }
+        return allStatuses.stream().distinct().toList();
+    }
+
+    private List<OrderStatus> mapShopeeOrderStatuses(List<FacebookOrderDto> orders, ProcessingResult result) {
+        List<OrderStatus> allOrderStatuses = new ArrayList<>();
+        for (FacebookOrderDto order : orders) {
+            try {
+                allOrderStatuses.addAll(shopeeMapper.mapToOrderStatus(order));
+            } catch (Exception e) {
+                result.getErrors().add(ErrorReport.of("SHOPEE_ORDER_STATUS", order.getOrderId(), "SHOPEE", e));
+            }
+        }
+        return allOrderStatuses;
+    }
+
+    private List<OrderStatusDetail> mapShopeeOrderStatusDetails(List<FacebookOrderDto> orders, ProcessingResult result) {
+        List<OrderStatusDetail> allDetails = new ArrayList<>();
+        for (FacebookOrderDto order : orders) {
+            try {
+                allDetails.addAll(shopeeMapper.mapToOrderStatusDetail(order));
+            } catch (Exception e) {
+                result.getErrors().add(ErrorReport.of("SHOPEE_ORDER_STATUS_DETAIL", order.getOrderId(), "SHOPEE", e));
             }
         }
         return allDetails;

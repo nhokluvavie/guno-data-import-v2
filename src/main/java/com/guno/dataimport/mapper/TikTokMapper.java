@@ -71,7 +71,7 @@ public class TikTokMapper {
 
         return Order.builder()
                 .orderId(order.getOrderId())
-                .customerId(order.getCustomer() != null ? order.getCustomer().getId() : null)
+                .customerId(order.getCustomer() != null ? order.getCustomer().getId() : "UNKNOWN")
                 .shopId("TIKTOK_SHOP")
                 .internalUuid("TIKTOK_" + order.getOrderId())
                 .itemQuantity(calculateTotalQuantity(order.getItems()))

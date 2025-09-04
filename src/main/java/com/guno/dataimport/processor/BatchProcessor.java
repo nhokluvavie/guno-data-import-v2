@@ -562,7 +562,8 @@ public class BatchProcessor {
         return orders.stream()
                 .map(order -> {
                     try {
-                        return tikTokMapper.mapToOrder(order);
+                        Order newOrder = tikTokMapper.mapToOrder(order);
+                        return newOrder;
                     } catch (Exception e) {
                         result.getErrors().add(ErrorReport.of("TIKTOK_ORDER", order.getOrderId(), "TIKTOK", e));
                         return null;

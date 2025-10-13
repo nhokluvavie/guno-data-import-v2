@@ -14,16 +14,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * BatchProcessor - ENHANCED: Multi-platform support with TikTok, Shopee integration
- * PATTERN: Pure temp table approach, NO DELETE operations
+ * BatchProcessor - Multi-platform data processing with comprehensive error handling
+ * PATTERN: Temp table strategy with per-platform transaction isolation
+ * PHASE 1.4: Enhanced error handling - no single order failure crashes entire batch
+ * FIXED: Removed OrderStatusDetail (table doesn't exist in schema)
  */
 @Service
 @RequiredArgsConstructor
@@ -31,8 +31,8 @@ import java.util.stream.Collectors;
 public class BatchProcessor {
 
     private final FacebookMapper facebookMapper;
-    private final TikTokMapper tikTokMapper;  // NEW: TikTok mapper
-    private final ShopeeMapper shopeeMapper;  // NEW: Shopee mapper
+    private final TikTokMapper tikTokMapper;
+    private final ShopeeMapper shopeeMapper;
 
     private final CustomerRepository customerRepository;
     private final OrderRepository orderRepository;
@@ -43,119 +43,122 @@ public class BatchProcessor {
     private final ShippingRepository shippingRepository;
     private final ProcessingDateRepository processingDateRepository;
     private final OrderStatusRepository orderStatusRepository;
-    private final OrderStatusDetailRepository orderStatusDetailRepository;
     private final StatusRepository statusRepository;
 
     /**
-     * MAIN ENTRY POINT: Process multi-platform data with temp table strategy
+     * MAIN ENTRY POINT: Process multi-platform data with comprehensive error handling
      */
     public ProcessingResult processCollectedData(CollectedData collectedData) {
-        if (collectedData == null || collectedData.getTotalOrders() == 0) {
+        // Validation
+        if (collectedData == null) {
+            log.warn("Received null CollectedData");
+            return ProcessingResult.builder()
+                    .failedCount(0)
+                    .build();
+        }
+
+        if (collectedData.getTotalOrders() == 0) {
+            log.info("No orders to process");
             return ProcessingResult.builder().build();
         }
 
         long startTime = System.currentTimeMillis();
         ProcessingResult globalResult = ProcessingResult.builder().build();
 
-        log.info("Processing multi-platform data - Facebook: {}, TikTok: {}, Shopee: {}, Total: {}",
-                collectedData.getFacebookOrders().size(),
-                collectedData.getTikTokOrders().size(),
-                collectedData.getShopeeOrders().size(),
-                collectedData.getTotalOrders());
+        try {
+            log.info("🚀 Starting multi-platform processing - Facebook: {}, TikTok: {}, Shopee: {}, Total: {}",
+                    collectedData.getFacebookOrders().size(),
+                    collectedData.getTikTokOrders().size(),
+                    collectedData.getShopeeOrders().size(),
+                    collectedData.getTotalOrders());
 
-        // Process Facebook in separate transaction
-        if (!collectedData.getFacebookOrders().isEmpty()) {
-            try {
-                log.info("Processing {} Facebook orders in separate transaction...",
-                        collectedData.getFacebookOrders().size());
-                ProcessingResult fbResult = processFacebookWithTransaction(collectedData.getFacebookOrders());
-                globalResult.merge(fbResult);
-                log.info("✅ Facebook: {} success, {} failed",
-                        fbResult.getSuccessCount(), fbResult.getFailedCount());
-            } catch (Exception e) {
-                log.error("❌ Facebook transaction failed: {}", e.getMessage(), e);
-                globalResult.setFailedCount(globalResult.getFailedCount() + collectedData.getFacebookOrders().size());
-                globalResult.getErrors().add(ErrorReport.of("FACEBOOK_TX", "BATCH", "FACEBOOK", e));
+            // Process Facebook (independent transaction)
+            if (!collectedData.getFacebookOrders().isEmpty()) {
+                try {
+                    log.info("📘 Processing {} Facebook orders...", collectedData.getFacebookOrders().size());
+                    ProcessingResult fbResult = processFacebookWithTransaction(collectedData.getFacebookOrders());
+                    globalResult.merge(fbResult);
+                    log.info("✅ Facebook completed - Success: {}, Failed: {}",
+                            fbResult.getSuccessCount(), fbResult.getFailedCount());
+                } catch (Exception e) {
+                    log.error("❌ Facebook batch failed: {}", e.getMessage(), e);
+                    globalResult.setFailedCount(globalResult.getFailedCount() + collectedData.getFacebookOrders().size());
+                    globalResult.getErrors().add(ErrorReport.of("FACEBOOK_BATCH", "ALL", "FACEBOOK", e));
+                }
             }
-        }
 
-        // Process TikTok in separate transaction
-        if (!collectedData.getTikTokOrders().isEmpty()) {
-            try {
-                log.info("Processing {} TikTok orders in separate transaction...",
-                        collectedData.getTikTokOrders().size());
-                ProcessingResult ttResult = processTikTokWithTransaction(collectedData.getTikTokOrders());
-                globalResult.merge(ttResult);
-                log.info("✅ TikTok: {} success, {} failed",
-                        ttResult.getSuccessCount(), ttResult.getFailedCount());
-            } catch (Exception e) {
-                log.error("❌ TikTok transaction failed: {}", e.getMessage(), e);
-                globalResult.setFailedCount(globalResult.getFailedCount() + collectedData.getTikTokOrders().size());
-                globalResult.getErrors().add(ErrorReport.of("TIKTOK_TX", "BATCH", "TIKTOK", e));
+            // Process TikTok (independent transaction)
+            if (!collectedData.getTikTokOrders().isEmpty()) {
+                try {
+                    log.info("🎵 Processing {} TikTok orders...", collectedData.getTikTokOrders().size());
+                    ProcessingResult ttResult = processTikTokWithTransaction(collectedData.getTikTokOrders());
+                    globalResult.merge(ttResult);
+                    log.info("✅ TikTok completed - Success: {}, Failed: {}",
+                            ttResult.getSuccessCount(), ttResult.getFailedCount());
+                } catch (Exception e) {
+                    log.error("❌ TikTok batch failed: {}", e.getMessage(), e);
+                    globalResult.setFailedCount(globalResult.getFailedCount() + collectedData.getTikTokOrders().size());
+                    globalResult.getErrors().add(ErrorReport.of("TIKTOK_BATCH", "ALL", "TIKTOK", e));
+                }
             }
-        }
 
-        // Process Shopee in separate transaction
-        if (!collectedData.getShopeeOrders().isEmpty()) {
-            try {
-                log.info("Processing {} Shopee orders in separate transaction...",
-                        collectedData.getShopeeOrders().size());
-                ProcessingResult spResult = processShopeeWithTransaction(collectedData.getShopeeOrders());
-                globalResult.merge(spResult);
-                log.info("✅ Shopee: {} success, {} failed",
-                        spResult.getSuccessCount(), spResult.getFailedCount());
-            } catch (Exception e) {
-                log.error("❌ Shopee transaction failed: {}", e.getMessage(), e);
-                globalResult.setFailedCount(globalResult.getFailedCount() + collectedData.getShopeeOrders().size());
-                globalResult.getErrors().add(ErrorReport.of("SHOPEE_TX", "BATCH", "SHOPEE", e));
+            // Process Shopee (independent transaction)
+            if (!collectedData.getShopeeOrders().isEmpty()) {
+                try {
+                    log.info("🛒 Processing {} Shopee orders...", collectedData.getShopeeOrders().size());
+                    ProcessingResult spResult = processShopeeWithTransaction(collectedData.getShopeeOrders());
+                    globalResult.merge(spResult);
+                    log.info("✅ Shopee completed - Success: {}, Failed: {}",
+                            spResult.getSuccessCount(), spResult.getFailedCount());
+                } catch (Exception e) {
+                    log.error("❌ Shopee batch failed: {}", e.getMessage(), e);
+                    globalResult.setFailedCount(globalResult.getFailedCount() + collectedData.getShopeeOrders().size());
+                    globalResult.getErrors().add(ErrorReport.of("SHOPEE_BATCH", "ALL", "SHOPEE", e));
+                }
             }
+
+            globalResult.setProcessingTimeMs(System.currentTimeMillis() - startTime);
+
+            log.info("🎯 Multi-platform processing completed - Success: {}, Failed: {}, Duration: {}ms, Success Rate: {:.1f}%",
+                    globalResult.getSuccessCount(),
+                    globalResult.getFailedCount(),
+                    globalResult.getProcessingTimeMs(),
+                    globalResult.getSuccessRate());
+
+            return globalResult;
+
+        } catch (Exception e) {
+            log.error("💥 Critical error in batch processing: {}", e.getMessage(), e);
+            globalResult.setProcessingTimeMs(System.currentTimeMillis() - startTime);
+            globalResult.setFailedCount(collectedData.getTotalOrders());
+            globalResult.getErrors().add(ErrorReport.of("CRITICAL", "BATCH", "SYSTEM", e));
+            return globalResult;
         }
-
-        globalResult.setProcessingTimeMs(System.currentTimeMillis() - startTime);
-
-        log.info("Multi-platform processing completed - Total success: {}, Total failed: {}, Duration: {}ms",
-                globalResult.getSuccessCount(), globalResult.getFailedCount(), globalResult.getProcessingTimeMs());
-
-        return globalResult;
     }
 
-    /**
-     * Process Facebook orders in a NEW transaction
-     * REQUIRES_NEW = independent transaction that commits/rolls back separately
-     */
+    // ================================
+    // TRANSACTION WRAPPERS
+    // ================================
+
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public ProcessingResult processFacebookWithTransaction(List<Object> facebookOrders) {
-        log.debug("Starting Facebook transaction...");
-        ProcessingResult result = processFacebookOrders(facebookOrders);
-        log.debug("Facebook transaction completed successfully");
-        return result;
+        return processFacebookOrders(facebookOrders);
     }
 
-    /**
-     * Process TikTok orders in a NEW transaction
-     */
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public ProcessingResult processTikTokWithTransaction(List<Object> tikTokOrders) {
-        log.debug("Starting TikTok transaction...");
-        ProcessingResult result = processTikTokOrders(tikTokOrders);
-        log.debug("TikTok transaction completed successfully");
-        return result;
+        return processTikTokOrders(tikTokOrders);
     }
 
-    /**
-     * Process Shopee orders in a NEW transaction
-     */
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public ProcessingResult processShopeeWithTransaction(List<Object> shopeeOrders) {
-        log.debug("Starting Shopee transaction...");
-        ProcessingResult result = processShopeeOrders(shopeeOrders);
-        log.debug("Shopee transaction completed successfully");
-        return result;
+        return processShopeeOrders(shopeeOrders);
     }
 
-    /**
-     * FACEBOOK: Process Facebook orders using FacebookMapper
-     */
+    // ================================
+    // FACEBOOK PROCESSING
+    // ================================
+
     public ProcessingResult processFacebookOrders(List<Object> facebookOrderObjects) {
         ProcessingResult result = ProcessingResult.builder().build();
 
@@ -163,21 +166,20 @@ public class BatchProcessor {
             return result;
         }
 
-        // Convert objects to FacebookOrderDto
         List<FacebookOrderDto> facebookOrders = facebookOrderObjects.stream()
                 .filter(obj -> obj instanceof FacebookOrderDto)
                 .map(obj -> (FacebookOrderDto) obj)
                 .toList();
 
         if (facebookOrders.isEmpty()) {
-            log.warn("No valid FacebookOrderDto objects found in input");
+            log.warn("No valid FacebookOrderDto objects in input");
             return result;
         }
 
-        log.info("Processing {} Facebook orders with TEMP TABLE strategy", facebookOrders.size());
-
         try {
-            // Map entities using FacebookMapper
+            log.info("📘 Mapping {} Facebook orders...", facebookOrders.size());
+
+            // Map all entities with individual error handling
             List<Customer> customers = mapFacebookCustomers(facebookOrders, result);
             List<Order> orders = mapFacebookOrders(facebookOrders, result);
             List<OrderItem> orderItems = mapFacebookOrderItems(facebookOrders, result);
@@ -188,62 +190,43 @@ public class BatchProcessor {
             List<ProcessingDateInfo> dates = mapFacebookDates(facebookOrders, result);
             List<Status> statuses = mapFacebookStatuses(facebookOrders, result);
             List<OrderStatus> orderStatuses = mapFacebookOrderStatuses(facebookOrders, result);
-            List<OrderStatusDetail> orderStatusDetails = mapFacebookOrderStatusDetails(facebookOrders, result);
 
-            // Bulk upsert all entities via temp tables
-            log.debug("Upserting Facebook entities via temp tables...");
+            log.info("📘 Upserting Facebook entities via temp tables...");
 
-            // 1. Master data first
+            // Master data first
             customerRepository.bulkUpsert(customers);
-            log.debug("✅ Facebook customers upserted via temp table");
-
             statusRepository.bulkUpsert(statuses);
-            log.debug("✅ Facebook statuses upserted via temp table");
+            productRepository.bulkUpsert(products);
 
-            productRepository.bulkUpsert(products);            // ✅ MOVED UP
-            log.debug("✅ Facebook products upserted via temp table");
-
-// 2. Dependent tables
-            orderRepository.bulkUpsert(orders);
-            log.debug("✅ Facebook orders upserted via temp table");
-
+            // Dimension tables
             geographyRepository.bulkUpsert(geography);
-            log.debug("✅ Facebook geography upserted via temp table");
-
             paymentRepository.bulkUpsert(payments);
-            log.debug("✅ Facebook payments upserted via temp table");
-
             shippingRepository.bulkUpsert(shipping);
-            log.debug("✅ Facebook shipping upserted via temp table");
-
             processingDateRepository.bulkUpsert(dates);
-            log.debug("✅ Facebook processing dates upserted via temp table");
 
-// 3. Multi-dependency tables last
-            orderItemRepository.bulkUpsert(orderItems);        // ✅ MOVED DOWN
-            log.debug("✅ Facebook order items upserted via temp table");
+            // Fact tables
+            orderRepository.bulkUpsert(orders);
 
+            // Multi-dependency tables
+            orderItemRepository.bulkUpsert(orderItems);
             orderStatusRepository.bulkUpsert(orderStatuses);
-            log.debug("✅ Facebook order statuses upserted via temp table");
-
-            orderStatusDetailRepository.bulkUpsert(orderStatusDetails);
-            log.debug("✅ Facebook order statuses detail upserted via temp table");
 
             result.setSuccessCount(facebookOrders.size() - result.getFailedCount());
-            log.info("Successfully processed {} Facebook orders via TEMP TABLE strategy", result.getSuccessCount());
+            log.info("✅ Facebook processing completed - {} successful", result.getSuccessCount());
 
         } catch (Exception e) {
-            log.error("Facebook TEMP TABLE processing error: {}", e.getMessage(), e);
+            log.error("❌ Facebook processing error: {}", e.getMessage(), e);
             result.setFailedCount(facebookOrders.size());
-            result.getErrors().add(ErrorReport.of("FACEBOOK_ORDERS", "BATCH", "FACEBOOK", e));
+            result.getErrors().add(ErrorReport.of("FACEBOOK_PROCESSING", "BATCH", "FACEBOOK", e));
         }
 
         return result;
     }
 
-    /**
-     * TIKTOK: Process TikTok orders using TikTokMapper
-     */
+    // ================================
+    // TIKTOK PROCESSING
+    // ================================
+
     public ProcessingResult processTikTokOrders(List<Object> tikTokOrderObjects) {
         ProcessingResult result = ProcessingResult.builder().build();
 
@@ -251,21 +234,19 @@ public class BatchProcessor {
             return result;
         }
 
-        // Convert objects to FacebookOrderDto (TikTok reuses same structure!)
         List<FacebookOrderDto> tikTokOrders = tikTokOrderObjects.stream()
                 .filter(obj -> obj instanceof FacebookOrderDto)
                 .map(obj -> (FacebookOrderDto) obj)
                 .toList();
 
         if (tikTokOrders.isEmpty()) {
-            log.warn("No valid TikTok order objects found in input");
+            log.warn("No valid TikTok orders in input");
             return result;
         }
 
-        log.info("Processing {} TikTok orders with TEMP TABLE strategy", tikTokOrders.size());
-
         try {
-            // Map entities using TikTokMapper
+            log.info("🎵 Mapping {} TikTok orders...", tikTokOrders.size());
+
             List<Customer> customers = mapTikTokCustomers(tikTokOrders, result);
             List<Order> orders = mapTikTokOrders(tikTokOrders, result);
             List<OrderItem> orderItems = mapTikTokOrderItems(tikTokOrders, result);
@@ -276,62 +257,36 @@ public class BatchProcessor {
             List<ProcessingDateInfo> dates = mapTikTokDates(tikTokOrders, result);
             List<Status> statuses = mapTikTokStatuses(tikTokOrders, result);
             List<OrderStatus> orderStatuses = mapTikTokOrderStatuses(tikTokOrders, result);
-            List<OrderStatusDetail> orderStatusDetails = mapTikTokOrderStatusDetails(tikTokOrders, result);
 
-            // FIXED: Bulk upsert in CORRECT ORDER to avoid foreign key violations
-            log.debug("Upserting TikTok entities via temp tables...");
+            log.info("🎵 Upserting TikTok entities via temp tables...");
 
-            // 1. Master data first (no dependencies)
             customerRepository.bulkUpsert(customers);
-            log.debug("✅ TikTok customers upserted via temp table");
-
             statusRepository.bulkUpsert(statuses);
-            log.debug("✅ TikTok statuses upserted via temp table");
-
-            productRepository.bulkUpsert(products);            // ✅ MOVED UP - MUST BE BEFORE orderItems
-            log.debug("✅ TikTok products upserted via temp table");
-
-            // 2. Dependent tables (depend on customers, statuses, products)
-            orderRepository.bulkUpsert(orders);               // ✅ MUST BE BEFORE orderItems
-            log.debug("✅ TikTok orders upserted via temp table");
-
+            productRepository.bulkUpsert(products);
             geographyRepository.bulkUpsert(geography);
-            log.debug("✅ TikTok geography upserted via temp table");
-
             paymentRepository.bulkUpsert(payments);
-            log.debug("✅ TikTok payments upserted via temp table");
-
             shippingRepository.bulkUpsert(shipping);
-            log.debug("✅ TikTok shipping upserted via temp table");
-
             processingDateRepository.bulkUpsert(dates);
-            log.debug("✅ TikTok processing dates upserted via temp table");
-
-            // 3. Multi-dependency tables last (depend on orders + products + statuses)
-            orderItemRepository.bulkUpsert(orderItems);        // ✅ MOVED DOWN - AFTER products + orders
-            log.debug("✅ TikTok order items upserted via temp table");
-
-            orderStatusRepository.bulkUpsert(orderStatuses);   // ✅ AFTER orders + statuses
-            log.debug("✅ TikTok order statuses upserted via temp table");
-
-            orderStatusDetailRepository.bulkUpsert(orderStatusDetails); // ✅ AFTER orderStatuses
-            log.debug("✅ TikTok order status details upserted via temp table");
+            orderRepository.bulkUpsert(orders);
+            orderItemRepository.bulkUpsert(orderItems);
+            orderStatusRepository.bulkUpsert(orderStatuses);
 
             result.setSuccessCount(tikTokOrders.size() - result.getFailedCount());
-            log.info("Successfully processed {} TikTok orders via TEMP TABLE strategy", result.getSuccessCount());
+            log.info("✅ TikTok processing completed - {} successful", result.getSuccessCount());
 
         } catch (Exception e) {
-            log.error("TikTok TEMP TABLE processing error: {}", e.getMessage(), e);
+            log.error("❌ TikTok processing error: {}", e.getMessage(), e);
             result.setFailedCount(tikTokOrders.size());
-            result.getErrors().add(ErrorReport.of("TIKTOK_ORDERS", "BATCH", "TIKTOK", e));
+            result.getErrors().add(ErrorReport.of("TIKTOK_PROCESSING", "BATCH", "TIKTOK", e));
         }
 
         return result;
     }
 
-    /**
-     * TIKTOK: Process TikTok orders using TikTokMapper
-     */
+    // ================================
+    // SHOPEE PROCESSING
+    // ================================
+
     public ProcessingResult processShopeeOrders(List<Object> shopeeOrderObjects) {
         ProcessingResult result = ProcessingResult.builder().build();
 
@@ -339,21 +294,19 @@ public class BatchProcessor {
             return result;
         }
 
-        // Convert objects to FacebookOrderDto (Shopee reuses same structure!)
         List<FacebookOrderDto> shopeeOrders = shopeeOrderObjects.stream()
                 .filter(obj -> obj instanceof FacebookOrderDto)
                 .map(obj -> (FacebookOrderDto) obj)
                 .toList();
 
         if (shopeeOrders.isEmpty()) {
-            log.warn("No valid Shopee order objects found in input");
+            log.warn("No valid Shopee orders in input");
             return result;
         }
 
-        log.info("Processing {} Shopee orders with TEMP TABLE strategy", shopeeOrders.size());
-
         try {
-            // Map entities using ShopeeMapper
+            log.info("🛒 Mapping {} Shopee orders...", shopeeOrders.size());
+
             List<Customer> customers = mapShopeeCustomers(shopeeOrders, result);
             List<Order> orders = mapShopeeOrders(shopeeOrders, result);
             List<OrderItem> orderItems = mapShopeeOrderItems(shopeeOrders, result);
@@ -364,54 +317,27 @@ public class BatchProcessor {
             List<ProcessingDateInfo> dates = mapShopeeDates(shopeeOrders, result);
             List<Status> statuses = mapShopeeStatuses(shopeeOrders, result);
             List<OrderStatus> orderStatuses = mapShopeeOrderStatuses(shopeeOrders, result);
-            List<OrderStatusDetail> orderStatusDetails = mapShopeeOrderStatusDetails(shopeeOrders, result);
 
-            // FIXED: Bulk upsert in CORRECT ORDER to avoid foreign key violations
-            log.debug("Upserting Shopee entities via temp tables...");
+            log.info("🛒 Upserting Shopee entities via temp tables...");
 
-            // 1. Master data first (no dependencies)
             customerRepository.bulkUpsert(customers);
-            log.debug("✅ Shopee customers upserted via temp table");
-
             statusRepository.bulkUpsert(statuses);
-            log.debug("✅ Shopee statuses upserted via temp table");
-
-            productRepository.bulkUpsert(products);            // ✅ MOVED UP - MUST BE BEFORE orderItems
-            log.debug("✅ Shopee products upserted via temp table");
-
-            // 2. Dependent tables (depend on customers, statuses, products)
-            orderRepository.bulkUpsert(orders);               // ✅ MUST BE BEFORE orderItems
-            log.debug("✅ Shopee orders upserted via temp table");
-
+            productRepository.bulkUpsert(products);
             geographyRepository.bulkUpsert(geography);
-            log.debug("✅ Shopee geography upserted via temp table");
-
             paymentRepository.bulkUpsert(payments);
-            log.debug("✅ Shopee payments upserted via temp table");
-
             shippingRepository.bulkUpsert(shipping);
-            log.debug("✅ Shopee shipping upserted via temp table");
-
             processingDateRepository.bulkUpsert(dates);
-            log.debug("✅ Shopee processing dates upserted via temp table");
-
-            // 3. Multi-dependency tables last (depend on orders + products + statuses)
-            orderItemRepository.bulkUpsert(orderItems);        // ✅ MOVED DOWN - AFTER products + orders
-            log.debug("✅ Shopee order items upserted via temp table");
-
-            orderStatusRepository.bulkUpsert(orderStatuses);   // ✅ AFTER orders + statuses
-            log.debug("✅ Shopee order statuses upserted via temp table");
-
-            orderStatusDetailRepository.bulkUpsert(orderStatusDetails); // ✅ AFTER orderStatuses
-            log.debug("✅ Shopee order status details upserted via temp table");
+            orderRepository.bulkUpsert(orders);
+            orderItemRepository.bulkUpsert(orderItems);
+            orderStatusRepository.bulkUpsert(orderStatuses);
 
             result.setSuccessCount(shopeeOrders.size() - result.getFailedCount());
-            log.info("Successfully processed {} Shopee orders via TEMP TABLE strategy", result.getSuccessCount());
+            log.info("✅ Shopee processing completed - {} successful", result.getSuccessCount());
 
         } catch (Exception e) {
-            log.error("Shopee TEMP TABLE processing error: {}", e.getMessage(), e);
+            log.error("❌ Shopee processing error: {}", e.getMessage(), e);
             result.setFailedCount(shopeeOrders.size());
-            result.getErrors().add(ErrorReport.of("SHOPEE_ORDERS", "BATCH", "SHOPEE", e));
+            result.getErrors().add(ErrorReport.of("SHOPEE_PROCESSING", "BATCH", "SHOPEE", e));
         }
 
         return result;
@@ -427,7 +353,7 @@ public class BatchProcessor {
                     try {
                         return facebookMapper.mapToCustomer(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("FACEBOOK_CUSTOMER", order.getOrderId(), "FACEBOOK", e));
+                        result.getErrors().add(ErrorReport.of("FB_CUSTOMER", order.getOrderId(), "FACEBOOK", e));
                         return null;
                     }
                 })
@@ -447,7 +373,8 @@ public class BatchProcessor {
                     try {
                         return facebookMapper.mapToOrder(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("FACEBOOK_ORDER", order.getOrderId(), "FACEBOOK", e));
+                        result.getErrors().add(ErrorReport.of("FB_ORDER", order.getOrderId(), "FACEBOOK", e));
+                        result.setFailedCount(result.getFailedCount() + 1);
                         return null;
                     }
                 })
@@ -461,7 +388,7 @@ public class BatchProcessor {
             try {
                 allItems.addAll(facebookMapper.mapToOrderItems(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("FACEBOOK_ORDER_ITEMS", order.getOrderId(), "FACEBOOK", e));
+                result.getErrors().add(ErrorReport.of("FB_ORDER_ITEMS", order.getOrderId(), "FACEBOOK", e));
             }
         }
         return allItems;
@@ -473,10 +400,9 @@ public class BatchProcessor {
             try {
                 allProducts.addAll(facebookMapper.mapToProducts(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("FACEBOOK_PRODUCTS", order.getOrderId(), "FACEBOOK", e));
+                result.getErrors().add(ErrorReport.of("FB_PRODUCTS", order.getOrderId(), "FACEBOOK", e));
             }
         }
-        // Remove duplicates
         return allProducts.stream()
                 .collect(Collectors.toMap(
                         product -> product.getSku() + "_" + product.getPlatformProductId(),
@@ -493,7 +419,7 @@ public class BatchProcessor {
                     try {
                         return facebookMapper.mapToGeographyInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("FACEBOOK_GEOGRAPHY", order.getOrderId(), "FACEBOOK", e));
+                        result.getErrors().add(ErrorReport.of("FB_GEOGRAPHY", order.getOrderId(), "FACEBOOK", e));
                         return null;
                     }
                 })
@@ -507,7 +433,7 @@ public class BatchProcessor {
                     try {
                         return facebookMapper.mapToPaymentInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("FACEBOOK_PAYMENT", order.getOrderId(), "FACEBOOK", e));
+                        result.getErrors().add(ErrorReport.of("FB_PAYMENT", order.getOrderId(), "FACEBOOK", e));
                         return null;
                     }
                 })
@@ -521,7 +447,7 @@ public class BatchProcessor {
                     try {
                         return facebookMapper.mapToShippingInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("FACEBOOK_SHIPPING", order.getOrderId(), "FACEBOOK", e));
+                        result.getErrors().add(ErrorReport.of("FB_SHIPPING", order.getOrderId(), "FACEBOOK", e));
                         return null;
                     }
                 })
@@ -535,7 +461,7 @@ public class BatchProcessor {
                     try {
                         return facebookMapper.mapToProcessingDateInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("FACEBOOK_DATE", order.getOrderId(), "FACEBOOK", e));
+                        result.getErrors().add(ErrorReport.of("FB_DATE", order.getOrderId(), "FACEBOOK", e));
                         return null;
                     }
                 })
@@ -549,7 +475,7 @@ public class BatchProcessor {
             try {
                 allStatuses.addAll(facebookMapper.mapToStatus(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("FACEBOOK_STATUS", order.getOrderId(), "FACEBOOK", e));
+                result.getErrors().add(ErrorReport.of("FB_STATUS", order.getOrderId(), "FACEBOOK", e));
             }
         }
         return allStatuses.stream().distinct().toList();
@@ -561,22 +487,10 @@ public class BatchProcessor {
             try {
                 allOrderStatuses.addAll(facebookMapper.mapToOrderStatus(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("FACEBOOK_ORDER_STATUS", order.getOrderId(), "FACEBOOK", e));
+                result.getErrors().add(ErrorReport.of("FB_ORDER_STATUS", order.getOrderId(), "FACEBOOK", e));
             }
         }
         return allOrderStatuses;
-    }
-
-    private List<OrderStatusDetail> mapFacebookOrderStatusDetails(List<FacebookOrderDto> orders, ProcessingResult result) {
-        List<OrderStatusDetail> allDetails = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
-            try {
-                allDetails.addAll(facebookMapper.mapToOrderStatusDetail(order));
-            } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("FACEBOOK_ORDER_STATUS_DETAIL", order.getOrderId(), "FACEBOOK", e));
-            }
-        }
-        return allDetails;
     }
 
     // ================================
@@ -585,14 +499,11 @@ public class BatchProcessor {
 
     private List<Customer> mapTikTokCustomers(List<FacebookOrderDto> orders, ProcessingResult result) {
         return orders.stream()
-                .filter(order -> order.getCustomer() != null && order.getCustomer().getId() != null)
                 .map(order -> {
                     try {
                         return tikTokMapper.mapToCustomer(order);
                     } catch (Exception e) {
-                        log.error("Failed mapping TikTok customer for order {}: {}",
-                                order.getOrderId(), e.getMessage());
-                        result.getErrors().add(ErrorReport.of("TIKTOK_CUSTOMER", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_CUSTOMER", order.getOrderId(), "TIKTOK", e));
                         return null;
                     }
                 })
@@ -612,8 +523,8 @@ public class BatchProcessor {
                     try {
                         return tikTokMapper.mapToOrder(order);
                     } catch (Exception e) {
-                        log.error("Failed mapping TikTok order {}: {}", order.getOrderId(), e.getMessage());
-                        result.getErrors().add(ErrorReport.of("TIKTOK_ORDER", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_ORDER", order.getOrderId(), "TIKTOK", e));
+                        result.setFailedCount(result.getFailedCount() + 1);
                         return null;
                     }
                 })
@@ -627,7 +538,7 @@ public class BatchProcessor {
             try {
                 allItems.addAll(tikTokMapper.mapToOrderItems(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("TIKTOK_ORDER_ITEMS", order.getOrderId(), "TIKTOK", e));
+                result.getErrors().add(ErrorReport.of("TT_ORDER_ITEMS", order.getOrderId(), "TIKTOK", e));
             }
         }
         return allItems;
@@ -639,10 +550,9 @@ public class BatchProcessor {
             try {
                 allProducts.addAll(tikTokMapper.mapToProducts(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("TIKTOK_PRODUCTS", order.getOrderId(), "TIKTOK", e));
+                result.getErrors().add(ErrorReport.of("TT_PRODUCTS", order.getOrderId(), "TIKTOK", e));
             }
         }
-        // Remove duplicates
         return allProducts.stream()
                 .collect(Collectors.toMap(
                         product -> product.getSku() + "_" + product.getPlatformProductId(),
@@ -659,7 +569,7 @@ public class BatchProcessor {
                     try {
                         return tikTokMapper.mapToGeographyInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("TIKTOK_GEOGRAPHY", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_GEOGRAPHY", order.getOrderId(), "TIKTOK", e));
                         return null;
                     }
                 })
@@ -673,7 +583,7 @@ public class BatchProcessor {
                     try {
                         return tikTokMapper.mapToPaymentInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("TIKTOK_PAYMENT", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_PAYMENT", order.getOrderId(), "TIKTOK", e));
                         return null;
                     }
                 })
@@ -687,7 +597,7 @@ public class BatchProcessor {
                     try {
                         return tikTokMapper.mapToShippingInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("TIKTOK_SHIPPING", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_SHIPPING", order.getOrderId(), "TIKTOK", e));
                         return null;
                     }
                 })
@@ -699,11 +609,9 @@ public class BatchProcessor {
         return orders.stream()
                 .map(order -> {
                     try {
-                        ProcessingDateInfo date = tikTokMapper.mapToProcessingDateInfo(order);
-                        return date;
+                        return tikTokMapper.mapToProcessingDateInfo(order);
                     } catch (Exception e) {
-                        log.error("  ❌ Failed mapping order {}: {}", order.getOrderId(), e.getMessage());
-                        result.getErrors().add(ErrorReport.of("TIKTOK_DATE", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_DATE", order.getOrderId(), "TIKTOK", e));
                         return null;
                     }
                 })
@@ -717,7 +625,7 @@ public class BatchProcessor {
             try {
                 allStatuses.addAll(tikTokMapper.mapToStatus(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("TIKTOK_STATUS", order.getOrderId(), "TIKTOK", e));
+                result.getErrors().add(ErrorReport.of("TT_STATUS", order.getOrderId(), "TIKTOK", e));
             }
         }
         return allStatuses.stream().distinct().toList();
@@ -729,22 +637,10 @@ public class BatchProcessor {
             try {
                 allOrderStatuses.addAll(tikTokMapper.mapToOrderStatus(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("TIKTOK_ORDER_STATUS", order.getOrderId(), "TIKTOK", e));
+                result.getErrors().add(ErrorReport.of("TT_ORDER_STATUS", order.getOrderId(), "TIKTOK", e));
             }
         }
         return allOrderStatuses;
-    }
-
-    private List<OrderStatusDetail> mapTikTokOrderStatusDetails(List<FacebookOrderDto> orders, ProcessingResult result) {
-        List<OrderStatusDetail> allDetails = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
-            try {
-                allDetails.addAll(tikTokMapper.mapToOrderStatusDetail(order));
-            } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("TIKTOK_ORDER_STATUS_DETAIL", order.getOrderId(), "TIKTOK", e));
-            }
-        }
-        return allDetails;
     }
 
     // ================================
@@ -757,7 +653,7 @@ public class BatchProcessor {
                     try {
                         return shopeeMapper.mapToCustomer(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SHOPEE_CUSTOMER", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SP_CUSTOMER", order.getOrderId(), "SHOPEE", e));
                         return null;
                     }
                 })
@@ -777,7 +673,8 @@ public class BatchProcessor {
                     try {
                         return shopeeMapper.mapToOrder(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SHOPEE_ORDER", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SP_ORDER", order.getOrderId(), "SHOPEE", e));
+                        result.setFailedCount(result.getFailedCount() + 1);
                         return null;
                     }
                 })
@@ -791,7 +688,7 @@ public class BatchProcessor {
             try {
                 allItems.addAll(shopeeMapper.mapToOrderItems(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("SHOPEE_ORDER_ITEMS", order.getOrderId(), "SHOPEE", e));
+                result.getErrors().add(ErrorReport.of("SP_ORDER_ITEMS", order.getOrderId(), "SHOPEE", e));
             }
         }
         return allItems;
@@ -803,10 +700,9 @@ public class BatchProcessor {
             try {
                 allProducts.addAll(shopeeMapper.mapToProducts(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("SHOPEE_PRODUCTS", order.getOrderId(), "SHOPEE", e));
+                result.getErrors().add(ErrorReport.of("SP_PRODUCTS", order.getOrderId(), "SHOPEE", e));
             }
         }
-        // Remove duplicates
         return allProducts.stream()
                 .collect(Collectors.toMap(
                         product -> product.getSku() + "_" + product.getPlatformProductId(),
@@ -823,7 +719,7 @@ public class BatchProcessor {
                     try {
                         return shopeeMapper.mapToGeographyInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SHOPEE_GEOGRAPHY", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SP_GEOGRAPHY", order.getOrderId(), "SHOPEE", e));
                         return null;
                     }
                 })
@@ -837,7 +733,7 @@ public class BatchProcessor {
                     try {
                         return shopeeMapper.mapToPaymentInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SHOPEE_PAYMENT", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SP_PAYMENT", order.getOrderId(), "SHOPEE", e));
                         return null;
                     }
                 })
@@ -851,7 +747,7 @@ public class BatchProcessor {
                     try {
                         return shopeeMapper.mapToShippingInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SHOPEE_SHIPPING", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SP_SHIPPING", order.getOrderId(), "SHOPEE", e));
                         return null;
                     }
                 })
@@ -865,7 +761,7 @@ public class BatchProcessor {
                     try {
                         return shopeeMapper.mapToProcessingDateInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SHOPEE_DATE", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SP_DATE", order.getOrderId(), "SHOPEE", e));
                         return null;
                     }
                 })
@@ -879,7 +775,7 @@ public class BatchProcessor {
             try {
                 allStatuses.addAll(shopeeMapper.mapToStatus(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("SHOPEE_STATUS", order.getOrderId(), "SHOPEE", e));
+                result.getErrors().add(ErrorReport.of("SP_STATUS", order.getOrderId(), "SHOPEE", e));
             }
         }
         return allStatuses.stream().distinct().toList();
@@ -891,48 +787,9 @@ public class BatchProcessor {
             try {
                 allOrderStatuses.addAll(shopeeMapper.mapToOrderStatus(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("SHOPEE_ORDER_STATUS", order.getOrderId(), "SHOPEE", e));
+                result.getErrors().add(ErrorReport.of("SP_ORDER_STATUS", order.getOrderId(), "SHOPEE", e));
             }
         }
         return allOrderStatuses;
-    }
-
-    private List<OrderStatusDetail> mapShopeeOrderStatusDetails(List<FacebookOrderDto> orders, ProcessingResult result) {
-        List<OrderStatusDetail> allDetails = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
-            try {
-                allDetails.addAll(shopeeMapper.mapToOrderStatusDetail(order));
-            } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("SHOPEE_ORDER_STATUS_DETAIL", order.getOrderId(), "SHOPEE", e));
-            }
-        }
-        return allDetails;
-    }
-
-    // ================================
-    // UTILITY METHODS
-    // ================================
-
-    /**
-     * Get processing statistics
-     */
-    public String getProcessingStats() {
-        return String.format("BatchProcessor ready for multi-platform processing at %s",
-                LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-    }
-
-    /**
-     * Validate system readiness
-     */
-    public boolean isSystemReady() {
-        try {
-            return customerRepository != null &&
-                    orderRepository != null &&
-                    facebookMapper != null &&
-                    tikTokMapper != null;
-        } catch (Exception e) {
-            log.warn("System readiness check failed: {}", e.getMessage());
-            return false;
-        }
     }
 }

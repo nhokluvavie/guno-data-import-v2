@@ -43,7 +43,6 @@ public class BatchProcessor {
     private final ShippingRepository shippingRepository;
     private final ProcessingDateRepository processingDateRepository;
     private final OrderStatusRepository orderStatusRepository;
-    private final StatusRepository statusRepository;
 
     /**
      * MAIN ENTRY POINT: Process multi-platform data with comprehensive error handling
@@ -188,14 +187,12 @@ public class BatchProcessor {
             List<PaymentInfo> payments = mapFacebookPayments(facebookOrders, result);
             List<ShippingInfo> shipping = mapFacebookShipping(facebookOrders, result);
             List<ProcessingDateInfo> dates = mapFacebookDates(facebookOrders, result);
-            List<Status> statuses = mapFacebookStatuses(facebookOrders, result);
             List<OrderStatus> orderStatuses = mapFacebookOrderStatuses(facebookOrders, result);
 
             log.info("📘 Upserting Facebook entities via temp tables...");
 
             // Master data first
             customerRepository.bulkUpsert(customers);
-            statusRepository.bulkUpsert(statuses);
             productRepository.bulkUpsert(products);
 
             // Dimension tables
@@ -255,13 +252,11 @@ public class BatchProcessor {
             List<PaymentInfo> payments = mapTikTokPayments(tikTokOrders, result);
             List<ShippingInfo> shipping = mapTikTokShipping(tikTokOrders, result);
             List<ProcessingDateInfo> dates = mapTikTokDates(tikTokOrders, result);
-            List<Status> statuses = mapTikTokStatuses(tikTokOrders, result);
             List<OrderStatus> orderStatuses = mapTikTokOrderStatuses(tikTokOrders, result);
 
             log.info("🎵 Upserting TikTok entities via temp tables...");
 
             customerRepository.bulkUpsert(customers);
-            statusRepository.bulkUpsert(statuses);
             productRepository.bulkUpsert(products);
             geographyRepository.bulkUpsert(geography);
             paymentRepository.bulkUpsert(payments);
@@ -315,13 +310,11 @@ public class BatchProcessor {
             List<PaymentInfo> payments = mapShopeePayments(shopeeOrders, result);
             List<ShippingInfo> shipping = mapShopeeShipping(shopeeOrders, result);
             List<ProcessingDateInfo> dates = mapShopeeDates(shopeeOrders, result);
-            List<Status> statuses = mapShopeeStatuses(shopeeOrders, result);
             List<OrderStatus> orderStatuses = mapShopeeOrderStatuses(shopeeOrders, result);
 
             log.info("🛒 Upserting Shopee entities via temp tables...");
 
             customerRepository.bulkUpsert(customers);
-            statusRepository.bulkUpsert(statuses);
             productRepository.bulkUpsert(products);
             geographyRepository.bulkUpsert(geography);
             paymentRepository.bulkUpsert(payments);
@@ -469,17 +462,6 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<Status> mapFacebookStatuses(List<FacebookOrderDto> orders, ProcessingResult result) {
-        List<Status> allStatuses = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
-            try {
-                allStatuses.addAll(facebookMapper.mapToStatus(order));
-            } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("FB_STATUS", order.getOrderId(), "FACEBOOK", e));
-            }
-        }
-        return allStatuses.stream().distinct().toList();
-    }
 
     private List<OrderStatus> mapFacebookOrderStatuses(List<FacebookOrderDto> orders, ProcessingResult result) {
         List<OrderStatus> allOrderStatuses = new ArrayList<>();
@@ -619,18 +601,6 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<Status> mapTikTokStatuses(List<FacebookOrderDto> orders, ProcessingResult result) {
-        List<Status> allStatuses = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
-            try {
-                allStatuses.addAll(tikTokMapper.mapToStatus(order));
-            } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("TT_STATUS", order.getOrderId(), "TIKTOK", e));
-            }
-        }
-        return allStatuses.stream().distinct().toList();
-    }
-
     private List<OrderStatus> mapTikTokOrderStatuses(List<FacebookOrderDto> orders, ProcessingResult result) {
         List<OrderStatus> allOrderStatuses = new ArrayList<>();
         for (FacebookOrderDto order : orders) {
@@ -767,18 +737,6 @@ public class BatchProcessor {
                 })
                 .filter(date -> date != null)
                 .toList();
-    }
-
-    private List<Status> mapShopeeStatuses(List<FacebookOrderDto> orders, ProcessingResult result) {
-        List<Status> allStatuses = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
-            try {
-                allStatuses.addAll(shopeeMapper.mapToStatus(order));
-            } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("SP_STATUS", order.getOrderId(), "SHOPEE", e));
-            }
-        }
-        return allStatuses.stream().distinct().toList();
     }
 
     private List<OrderStatus> mapShopeeOrderStatuses(List<FacebookOrderDto> orders, ProcessingResult result) {

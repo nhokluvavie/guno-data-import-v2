@@ -7,6 +7,7 @@ import com.guno.dataimport.entity.*;
 import com.guno.dataimport.util.KeyGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -18,13 +19,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * FacebookMapper - Maps Facebook API DTOs to internal entities
- * PHASE 2.2: Added seller fields, is_returned logic, KeyGenerator integration
+ * FIXED VERSION: Proper DTO structure mapping, no hash for phone/email
  */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class FacebookMapper {
-
+    @Value("${api.facebook.default-date:}")
     private static final DateTimeFormatter[] DATE_FORMATTERS = {
             DateTimeFormatter.ISO_DATE_TIME,
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
@@ -32,7 +33,7 @@ public class FacebookMapper {
     };
 
     // ================================
-    // CUSTOMER MAPPING (FIXED - Match Entity)
+    // CUSTOMER MAPPING
     // ================================
 
     public Customer mapToCustomer(FacebookOrderDto order) {
@@ -45,10 +46,10 @@ public class FacebookMapper {
                 .customerId(customerId)
                 .customerKey(generateKey(customerId))
                 .platformCustomerId(customerId)
-                .phoneHash(hashPhone(fbCustomer.getPrimaryPhone()))
-                .emailHash(hashEmail(fbCustomer.getPrimaryEmail()))
+                .phoneHash(fbCustomer.getPrimaryPhone())  // Keep original phone
+                .emailHash(fbCustomer.getPrimaryEmail())  // Keep original email
                 .gender(fbCustomer.getGender())
-                .ageGroup(null)  // Not available from API
+                .ageGroup(null)
                 .customerSegment("FACEBOOK")
                 .customerTier("STANDARD")
                 .acquisitionChannel("FACEBOOK")
@@ -77,7 +78,7 @@ public class FacebookMapper {
     }
 
     // ================================
-    // ORDER MAPPING (ALREADY CORRECT)
+    // ORDER MAPPING
     // ================================
 
     public Order mapToOrder(FacebookOrderDto order) {
@@ -107,7 +108,7 @@ public class FacebookMapper {
                 .daysToShip(0)
                 .isDelivered(isDelivered(order))
                 .isCancelled(isCancelled(order))
-                .isReturned(isOrderReturned(order))  // ✨ NEW - Option A logic
+                .isReturned(isOrderReturned(order))
                 .isCod(order.isCodOrder())
                 .isNewCustomer(false)
                 .isRepeatCustomer(false)
@@ -126,24 +127,19 @@ public class FacebookMapper {
                 .organicRevenue(!hasAd(order) ? safeDouble(order.getTotalPriceAfterSubDiscount()) : 0.0)
                 .aov(safeDouble(order.getTotalPriceAfterSubDiscount()))
                 .shippingCostRatio(calculateShippingRatio(order))
-                .createdAt(parseDateTime(order.getCreatedAt()))  // ✅ FIX: LocalDateTime not String
+                .createdAt(order.getCreatedAt())
                 .rawData(0)
                 .platformSpecificData(0)
-                .sellerId(extractSellerId(order))        // ✨ NEW
-                .sellerName(extractSellerName(order))    // ✨ NEW
-                .sellerEmail(extractSellerEmail(order))  // ✨ NEW
+                .sellerId(extractSellerId(order))
+                .sellerName(extractSellerName(order))
+                .sellerEmail(extractSellerEmail(order))
                 .build();
     }
 
-    /**
-     * ✨ NEW - Determine if order has been returned (Option A: partner_status only)
-     */
     private boolean isOrderReturned(FacebookOrderDto order) {
         if (order == null || order.getTrackingHistories() == null) {
             return false;
         }
-
-        // Check if any tracking history has partner_status = "returned"
         return order.getTrackingHistories()
                 .stream()
                 .anyMatch(h -> "returned".equalsIgnoreCase(h.getPartnerStatus()));
@@ -171,6 +167,9 @@ public class FacebookMapper {
                     .unitPrice(price)
                     .totalPrice(price * qty)
                     .itemDiscount(safeDouble(item.getTotalDiscount()))
+                    .promotionType(null)
+                    .promotionCode(null)
+                    .itemStatus(null)
                     .itemSequence(sequence.getAndIncrement())
                     .opId((long) item.getId().hashCode())
                     .build());
@@ -208,7 +207,7 @@ public class FacebookMapper {
     }
 
     // ================================
-    // GEOGRAPHY MAPPING (WITH KEY GENERATOR)
+    // GEOGRAPHY MAPPING
     // ================================
 
     public GeographyInfo mapToGeographyInfo(FacebookOrderDto order) {
@@ -219,71 +218,100 @@ public class FacebookMapper {
 
         return GeographyInfo.builder()
                 .orderId(order.getOrderId())
-                .geographyKey(KeyGenerator.generateGeographyKey(province, district))  // ✨ NEW
+                .geographyKey(KeyGenerator.generateGeographyKey(province, district))
                 .countryCode("VN")
                 .countryName("Vietnam")
+                .regionCode(null)
+                .regionName(null)
+                .provinceCode(null)
                 .provinceName(province)
+                .provinceType(null)
+                .districtCode(null)
                 .districtName(district)
+                .districtType(null)
+                .wardCode(null)
+                .wardName(null)
+                .wardType(null)
                 .isUrban(isUrbanProvince(province))
                 .isMetropolitan(isMetroProvince(province))
+                .isCoastal(false)
+                .isBorder(false)
                 .economicTier(getEconomicTier(province))
+                .populationDensity(null)
+                .incomeLevel(null)
                 .shippingZone(getShippingZone(province))
+                .deliveryComplexity(null)
                 .standardDeliveryDays(getDeliveryDays(province))
                 .expressDeliveryAvailable(true)
+                .latitude(0.0)
+                .longitude(0.0)
                 .build();
     }
 
     // ================================
-    // PAYMENT MAPPING (WITH KEY GENERATOR)
+    // PAYMENT MAPPING
     // ================================
 
     public PaymentInfo mapToPaymentInfo(FacebookOrderDto order) {
         if (order == null) return null;
 
         boolean isCod = order.isCodOrder();
-        String paymentMethod = isCod ? "COD" : "ONLINE";
-        String paymentProvider = "FACEBOOK_PAY";
-        String paymentCategory = isCod ? "CASH_ON_DELIVERY" : "DIGITAL_PAYMENT";
+        String method = isCod ? "COD" : "ONLINE";
+        String provider = isCod ? "CASH" : "FACEBOOK_PAY";
+        String category = isCod ? "CASH_ON_DELIVERY" : "ONLINE_PAYMENT";
 
         return PaymentInfo.builder()
                 .orderId(order.getOrderId())
-                .paymentKey(KeyGenerator.generatePaymentKey(paymentMethod, paymentProvider, paymentCategory))  // ✨ NEW
-                .paymentMethod(paymentMethod)
-                .paymentCategory(paymentCategory)
-                .paymentProvider(paymentProvider)
+                .paymentKey(KeyGenerator.generatePaymentKey(method, provider, category))
+                .paymentMethod(method)
+                .paymentCategory(category)
+                .paymentProvider(provider)
                 .isCod(isCod)
                 .isPrepaid(!isCod)
+                .isInstallment(false)
+                .installmentMonths(0)
                 .supportsRefund(true)
                 .supportsPartialRefund(true)
                 .refundProcessingDays(7)
                 .riskLevel("LOW")
+                .requiresVerification(false)
+                .fraudScore(0.0)
+                .transactionFeeRate(0.0)
+                .processingFee(0.0)
+                .paymentProcessingTimeMinutes(0)
                 .settlementDays(1)
                 .build();
     }
 
     // ================================
-    // SHIPPING MAPPING (WITH KEY GENERATOR)
+    // SHIPPING MAPPING
     // ================================
 
     public ShippingInfo mapToShippingInfo(FacebookOrderDto order) {
         if (order == null) return null;
 
-        String providerId = "FACEBOOK";
+        String providerId = "FACEBOOK_LOGISTICS";
         String serviceType = "STANDARD";
 
         return ShippingInfo.builder()
                 .orderId(order.getOrderId())
-                .shippingKey(KeyGenerator.generateShippingKey(providerId, serviceType))  // ✨ NEW
+                .shippingKey(KeyGenerator.generateShippingKey(providerId, serviceType))
                 .providerId(providerId)
-                .providerName("Facebook Marketplace")
+                .providerName("Facebook Logistics")
                 .providerType("MARKETPLACE")
+                .providerTier("STANDARD")
+                .serviceType(serviceType)
+                .serviceTier("STANDARD")
+                .deliveryCommitment(null)
+                .shippingMethod("STANDARD")
+                .pickupType(null)
+                .deliveryType(null)
                 .baseFee(safeDouble(order.getShippingFee()))
-                .supportsCod(order.isCodOrder())
-                .coverageProvinces(getProvinceName(order))
                 .weightBasedFee(0.0)
                 .distanceBasedFee(0.0)
                 .codFee(0.0)
                 .insuranceFee(0.0)
+                .supportsCod(order.isCodOrder())
                 .supportsInsurance(false)
                 .supportsFragile(false)
                 .supportsRefrigerated(false)
@@ -293,36 +321,10 @@ public class FacebookMapper {
                 .onTimeDeliveryRate(0.0)
                 .successDeliveryRate(0.0)
                 .damageRate(0.0)
+                .coverageProvinces(getProvinceName(order))
                 .coverageNationwide(false)
                 .coverageInternational(false)
                 .build();
-    }
-
-    // ================================
-    // STATUS MAPPING
-    // ================================
-
-    public List<Status> mapToStatus(FacebookOrderDto order) {
-        if (order == null) return new ArrayList<>();
-
-        List<Status> statuses = new ArrayList<>();
-        Integer currentStatus = order.getStatus();
-        String statusName = order.getStatusName();
-
-        if (currentStatus != null) {
-            Status status = Status.builder()
-                    .statusKey((long) currentStatus)
-                    .platform("FACEBOOK")
-                    .platformStatusCode(currentStatus.toString())
-                    .platformStatusName(statusName != null ? statusName : getStandardStatusName(currentStatus))
-                    .standardStatusCode(mapToStandardStatus(currentStatus))
-                    .standardStatusName(getStandardStatusName(currentStatus))
-                    .statusCategory(getStatusCategory(currentStatus))
-                    .build();
-            statuses.add(status);
-        }
-
-        return statuses;
     }
 
     // ================================
@@ -345,7 +347,7 @@ public class FacebookMapper {
                     .subStatusId(subStatusId)
                     .partnerStatusId(partnerStatusId)
                     .transitionDateKey(getCurrentDateKey())
-                    .transitionTimestamp(parseDateTime(order.getCreatedAt()))
+                    .transitionTimestamp(order.getCreatedAt())
                     .durationInPreviousStatusHours(0)
                     .transitionReason("ORDER_CREATED")
                     .transitionTrigger("SYSTEM")
@@ -353,7 +355,7 @@ public class FacebookMapper {
                     .isOnTimeTransition(true)
                     .isExpectedTransition(true)
                     .historyKey(generateKey("HIST_" + order.getOrderId()))
-                    .createdAt(order.getCreatedAt())
+                    .createdAt(String.valueOf(order.getCreatedAt()))
                     .build();
             orderStatuses.add(orderStatus);
         }
@@ -368,7 +370,7 @@ public class FacebookMapper {
     public ProcessingDateInfo mapToProcessingDateInfo(FacebookOrderDto order) {
         if (order == null) return null;
 
-        LocalDateTime orderDate = parseDateTime(order.getCreatedAt());
+        LocalDateTime orderDate = order.getCreatedAt();
         if (orderDate == null) {
             orderDate = LocalDateTime.now();
         }
@@ -400,9 +402,6 @@ public class FacebookMapper {
     // HELPER METHODS - SELLER EXTRACTION
     // ================================
 
-    /**
-     * ✨ NEW - Extract seller ID from assigning_seller or default
-     */
     private String extractSellerId(FacebookOrderDto order) {
         if (order.getAssigningSeller() != null && order.getAssigningSeller().getId() != null) {
             return order.getAssigningSeller().getId();
@@ -410,9 +409,6 @@ public class FacebookMapper {
         return "UNKNOWN";
     }
 
-    /**
-     * ✨ NEW - Extract seller name from assigning_seller.name (priority) or account_name (fallback)
-     */
     private String extractSellerName(FacebookOrderDto order) {
         if (order.getAssigningSeller() != null && order.getAssigningSeller().getName() != null) {
             return order.getAssigningSeller().getName();
@@ -423,9 +419,6 @@ public class FacebookMapper {
         return "UNKNOWN";
     }
 
-    /**
-     * ✨ NEW - Extract seller email from assigning_seller or default
-     */
     private String extractSellerEmail(FacebookOrderDto order) {
         if (order.getAssigningSeller() != null && order.getAssigningSeller().getEmail() != null) {
             return order.getAssigningSeller().getEmail();
@@ -434,7 +427,7 @@ public class FacebookMapper {
     }
 
     // ================================
-    // HELPER METHODS - STATUS & PARTNER STATUS
+    // HELPER METHODS - STATUS
     // ================================
 
     private String extractSubStatusId(FacebookOrderDto order) {
@@ -444,7 +437,7 @@ public class FacebookMapper {
 
     private Integer extractPartnerStatusId(FacebookOrderDto order) {
         if (order.getTrackingHistories() == null || order.getTrackingHistories().isEmpty()) {
-            return 0; // Unknown
+            return 0;
         }
 
         String partnerStatus = order.getTrackingHistories().get(0).getPartnerStatus();
@@ -464,80 +457,78 @@ public class FacebookMapper {
         };
     }
 
-    /**
-     * Map status code to standard status string (ALL 17 STATUS)
-     */
-    private String mapToStandardStatus(Integer status) {
-        if (status == null) return "UNKNOWN";
-        return switch (status) {
-            case -1 -> "CANCELLED";
-            case 0 -> "DRAFT";
-            case 1 -> "PENDING";
-            case 2 -> "CONFIRMED";
-            case 3 -> "SHIPPING";
-            case 4 -> "DELIVERED";
-            case 5 -> "REFUNDED";
-            case 6 -> "EXCHANGE";
-            case 7 -> "FAILED_DELIVERY";
-            case 8 -> "PACKED";
-            case 9 -> "READY_TO_SHIP";
-            case 10 -> "PROCESSING_RETURN";
-            case 11 -> "RETURNED_COMPLETED";
-            case 12 -> "PARTIAL_SHIPPED";
-            case 13 -> "ON_HOLD";
-            case 14 -> "PAYMENT_PENDING";
-            case 15 -> "PAYMENT_FAILED";
-            case 16 -> "PARTIAL_RETURNED";
-            default -> "STATUS_" + status;
-        };
+    // ================================
+    // HELPER METHODS - ITEM/PRODUCT (FIXED FOR DTO STRUCTURE)
+    // ================================
+
+    private String getSku(FacebookItemDto item) {
+        if (item.getVariationInfo() != null) {
+            String displayId = item.getVariationInfo().getDisplayId();
+            if (displayId != null && !displayId.trim().isEmpty()) {
+                return displayId.trim();
+            }
+        }
+        return "SKU_" + item.getId();
     }
 
-    /**
-     * Get human-readable status name (ALL 17 STATUS)
-     */
-    private String getStandardStatusName(Integer status) {
-        if (status == null) return "UNKNOWN";
-        return switch (status) {
-            case -1 -> "Đã hủy";
-            case 0 -> "Đơn nháp";
-            case 1 -> "Chờ xử lý";
-            case 2 -> "Đã xác nhận";
-            case 3 -> "Đang giao";
-            case 4 -> "Đã giao";
-            case 5 -> "Đã hoàn tiền";
-            case 6 -> "Đổi hàng";
-            case 7 -> "Giao thất bại";
-            case 8 -> "Đã đóng gói";
-            case 9 -> "Sẵn sàng giao";
-            case 10 -> "Đang hoàn";
-            case 11 -> "Đã hoàn về";
-            case 12 -> "Giao một phần";
-            case 13 -> "Tạm giữ";
-            case 14 -> "Chờ thanh toán";
-            case 15 -> "Thanh toán lỗi";
-            case 16 -> "Hoàn một phần";
-            default -> "STATUS_" + status;
-        };
+    private String getBarcode(FacebookItemDto item) {
+        if (item.getVariationInfo() != null) {
+            String barcode = item.getVariationInfo().getBarcode();
+            return (barcode != null && !barcode.trim().isEmpty()) ? barcode.trim() : null;
+        }
+        return null;
     }
 
-    /**
-     * Get status category (ALL 17 STATUS)
-     */
-    private String getStatusCategory(Integer status) {
-        if (status == null) return "UNKNOWN";
-        return switch (status) {
-            case -1 -> "CANCELLED";
-            case 0, 1, 2 -> "PROCESSING";
-            case 3, 8, 9, 12 -> "FULFILLMENT";
-            case 4 -> "COMPLETED";
-            case 5 -> "REFUND";
-            case 6 -> "EXCHANGE";
-            case 7 -> "FAILED";
-            case 10, 11, 16 -> "RETURN";
-            case 13 -> "ON_HOLD";
-            case 14, 15 -> "PAYMENT";
-            default -> "OTHER";
-        };
+    private String getName(FacebookItemDto item) {
+        if (item.getVariationInfo() != null) {
+            String name = item.getVariationInfo().getName();
+            if (name != null && !name.trim().isEmpty()) {
+                return name.trim();
+            }
+        }
+        return "Product " + item.getId();
+    }
+
+    private String getFieldValue(FacebookItemDto item, String fieldName) {
+        if (item.getVariationInfo() == null || item.getVariationInfo().getFields() == null) {
+            return null;
+        }
+        return item.getVariationInfo().getFields().stream()
+                .filter(f -> fieldName.equals(f.getName()))
+                .map(FacebookItemDto.VariationField::getValue)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private int getWeight(FacebookItemDto item) {
+        if (item.getVariationInfo() != null && item.getVariationInfo().getWeight() != null) {
+            return item.getVariationInfo().getWeight();
+        }
+        return 0;
+    }
+
+    private String getPriceRange(double price) {
+        if (price < 100000) return "UNDER_100K";
+        if (price < 500000) return "100K_500K";
+        if (price < 1000000) return "500K_1M";
+        return "OVER_1M";
+    }
+
+    private String getImageUrl(FacebookItemDto item) {
+        if (item.getVariationInfo() != null && item.getVariationInfo().getImages() != null) {
+            List<String> images = item.getVariationInfo().getImages();
+            if (!images.isEmpty()) {
+                return images.get(0);
+            }
+        }
+        return null;
+    }
+
+    private int getImageCount(FacebookItemDto item) {
+        if (item.getVariationInfo() != null && item.getVariationInfo().getImages() != null) {
+            return item.getVariationInfo().getImages().size();
+        }
+        return 0;
     }
 
     // ================================
@@ -628,52 +619,6 @@ public class FacebookMapper {
         int orders = safeInt(customer.getOrderCount());
         double revenue = safeDouble(customer.getPurchasedAmount());
         return orders > 0 ? revenue / orders : 0.0;
-    }
-
-    private String getSku(FacebookItemDto item) {
-        if (item.getSku() != null && !item.getSku().trim().isEmpty()) {
-            return item.getSku().trim();
-        }
-        return "SKU_" + item.getId();
-    }
-
-    private String getBarcode(FacebookItemDto item) {
-        return item.getBarcode() != null ? item.getBarcode() : "";
-    }
-
-    private String getName(FacebookItemDto item) {
-        return item.getName() != null ? item.getName() : "Unknown Product";
-    }
-
-    private String getFieldValue(FacebookItemDto item, String fieldName) {
-        if (item.getFields() == null) return null;
-        return item.getFields().stream()
-                .filter(f -> fieldName.equals(f.getName()))
-                .map(FacebookItemDto.Field::getValue)
-                .findFirst()
-                .orElse(null);
-    }
-
-    private int getWeight(FacebookItemDto item) {
-        return item.getWeight() != null ? item.getWeight() : 0;
-    }
-
-    private String getPriceRange(double price) {
-        if (price < 100000) return "UNDER_100K";
-        if (price < 500000) return "100K_500K";
-        if (price < 1000000) return "500K_1M";
-        return "OVER_1M";
-    }
-
-    private String getImageUrl(FacebookItemDto item) {
-        if (item.getImages() != null && !item.getImages().isEmpty()) {
-            return item.getImages().get(0).getUrl();
-        }
-        return null;
-    }
-
-    private int getImageCount(FacebookItemDto item) {
-        return item.getImages() != null ? item.getImages().size() : 0;
     }
 
     private LocalDateTime parseDateTime(String dateStr) {

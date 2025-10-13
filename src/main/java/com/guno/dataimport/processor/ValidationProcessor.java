@@ -176,7 +176,7 @@ public class ValidationProcessor {
     }
 
     private List<ErrorReport> validateDates(FacebookOrderDto order, String orderId, String platform) {
-        if (isBlank(order.getCreatedAt())) {
+        if (isBlank(String.valueOf(order.getCreatedAt()))) {
             return List.of(error("DATE", orderId, "Creation date missing", platform));
         }
 

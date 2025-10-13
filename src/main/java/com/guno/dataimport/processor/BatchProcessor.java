@@ -12,11 +12,13 @@ import com.guno.dataimport.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -47,14 +49,13 @@ public class BatchProcessor {
     /**
      * MAIN ENTRY POINT: Process multi-platform data with temp table strategy
      */
-    @Transactional
     public ProcessingResult processCollectedData(CollectedData collectedData) {
         if (collectedData == null || collectedData.getTotalOrders() == 0) {
             return ProcessingResult.builder().build();
         }
 
         long startTime = System.currentTimeMillis();
-        ProcessingResult result = ProcessingResult.builder().build();
+        ProcessingResult globalResult = ProcessingResult.builder().build();
 
         log.info("Processing multi-platform data - Facebook: {}, TikTok: {}, Shopee: {}, Total: {}",
                 collectedData.getFacebookOrders().size(),
@@ -62,53 +63,99 @@ public class BatchProcessor {
                 collectedData.getShopeeOrders().size(),
                 collectedData.getTotalOrders());
 
-        try {
-            // Process Facebook orders
-            if (!collectedData.getFacebookOrders().isEmpty()) {
-                log.info("Processing {} Facebook orders...", collectedData.getFacebookOrders().size());
-                ProcessingResult facebookResult = processFacebookOrders(collectedData.getFacebookOrders());
-                result.merge(facebookResult);
-                log.info("Facebook processing completed: {} success, {} failed",
-                        facebookResult.getSuccessCount(), facebookResult.getFailedCount());
+        // Process Facebook in separate transaction
+        if (!collectedData.getFacebookOrders().isEmpty()) {
+            try {
+                log.info("Processing {} Facebook orders in separate transaction...",
+                        collectedData.getFacebookOrders().size());
+                ProcessingResult fbResult = processFacebookWithTransaction(collectedData.getFacebookOrders());
+                globalResult.merge(fbResult);
+                log.info("✅ Facebook: {} success, {} failed",
+                        fbResult.getSuccessCount(), fbResult.getFailedCount());
+            } catch (Exception e) {
+                log.error("❌ Facebook transaction failed: {}", e.getMessage(), e);
+                globalResult.setFailedCount(globalResult.getFailedCount() + collectedData.getFacebookOrders().size());
+                globalResult.getErrors().add(ErrorReport.of("FACEBOOK_TX", "BATCH", "FACEBOOK", e));
             }
-
-            // Process TikTok orders - REUSES FacebookOrderDto structure!
-            if (!collectedData.getTikTokOrders().isEmpty()) {
-                log.info("Processing {} TikTok orders...", collectedData.getTikTokOrders().size());
-                ProcessingResult tikTokResult = processTikTokOrders(collectedData.getTikTokOrders());
-                result.merge(tikTokResult);
-                log.info("TikTok processing completed: {} success, {} failed",
-                        tikTokResult.getSuccessCount(), tikTokResult.getFailedCount());
-            }
-
-            // Process Shopee orders - REUSES FacebookOrderDto structure!
-            if (!collectedData.getShopeeOrders().isEmpty()) {
-                log.info("Processing {} Shopee orders...", collectedData.getShopeeOrders().size());
-                ProcessingResult shopeeResult = processShopeeOrders(collectedData.getShopeeOrders());
-                result.merge(shopeeResult);
-                log.info("Shopee processing completed: {} success, {} failed",
-                        shopeeResult.getSuccessCount(), shopeeResult.getFailedCount());
-            }
-
-            long duration = System.currentTimeMillis() - startTime;
-            result.setProcessingTimeMs(duration);
-
-            log.info("Multi-platform processing completed in {}ms - Total success: {}, Total failed: {}",
-                    duration, result.getSuccessCount(), result.getFailedCount());
-
-        } catch (Exception e) {
-            log.error("Multi-platform processing error: {}", e.getMessage(), e);
-            result.setFailedCount(collectedData.getTotalOrders());
-            result.getErrors().add(ErrorReport.of("MULTI_PLATFORM", "BATCH", "SYSTEM", e));
         }
 
+        // Process TikTok in separate transaction
+        if (!collectedData.getTikTokOrders().isEmpty()) {
+            try {
+                log.info("Processing {} TikTok orders in separate transaction...",
+                        collectedData.getTikTokOrders().size());
+                ProcessingResult ttResult = processTikTokWithTransaction(collectedData.getTikTokOrders());
+                globalResult.merge(ttResult);
+                log.info("✅ TikTok: {} success, {} failed",
+                        ttResult.getSuccessCount(), ttResult.getFailedCount());
+            } catch (Exception e) {
+                log.error("❌ TikTok transaction failed: {}", e.getMessage(), e);
+                globalResult.setFailedCount(globalResult.getFailedCount() + collectedData.getTikTokOrders().size());
+                globalResult.getErrors().add(ErrorReport.of("TIKTOK_TX", "BATCH", "TIKTOK", e));
+            }
+        }
+
+        // Process Shopee in separate transaction
+        if (!collectedData.getShopeeOrders().isEmpty()) {
+            try {
+                log.info("Processing {} Shopee orders in separate transaction...",
+                        collectedData.getShopeeOrders().size());
+                ProcessingResult spResult = processShopeeWithTransaction(collectedData.getShopeeOrders());
+                globalResult.merge(spResult);
+                log.info("✅ Shopee: {} success, {} failed",
+                        spResult.getSuccessCount(), spResult.getFailedCount());
+            } catch (Exception e) {
+                log.error("❌ Shopee transaction failed: {}", e.getMessage(), e);
+                globalResult.setFailedCount(globalResult.getFailedCount() + collectedData.getShopeeOrders().size());
+                globalResult.getErrors().add(ErrorReport.of("SHOPEE_TX", "BATCH", "SHOPEE", e));
+            }
+        }
+
+        globalResult.setProcessingTimeMs(System.currentTimeMillis() - startTime);
+
+        log.info("Multi-platform processing completed - Total success: {}, Total failed: {}, Duration: {}ms",
+                globalResult.getSuccessCount(), globalResult.getFailedCount(), globalResult.getProcessingTimeMs());
+
+        return globalResult;
+    }
+
+    /**
+     * Process Facebook orders in a NEW transaction
+     * REQUIRES_NEW = independent transaction that commits/rolls back separately
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
+    public ProcessingResult processFacebookWithTransaction(List<Object> facebookOrders) {
+        log.debug("Starting Facebook transaction...");
+        ProcessingResult result = processFacebookOrders(facebookOrders);
+        log.debug("Facebook transaction completed successfully");
+        return result;
+    }
+
+    /**
+     * Process TikTok orders in a NEW transaction
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
+    public ProcessingResult processTikTokWithTransaction(List<Object> tikTokOrders) {
+        log.debug("Starting TikTok transaction...");
+        ProcessingResult result = processTikTokOrders(tikTokOrders);
+        log.debug("TikTok transaction completed successfully");
+        return result;
+    }
+
+    /**
+     * Process Shopee orders in a NEW transaction
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
+    public ProcessingResult processShopeeWithTransaction(List<Object> shopeeOrders) {
+        log.debug("Starting Shopee transaction...");
+        ProcessingResult result = processShopeeOrders(shopeeOrders);
+        log.debug("Shopee transaction completed successfully");
         return result;
     }
 
     /**
      * FACEBOOK: Process Facebook orders using FacebookMapper
      */
-    @Transactional
     public ProcessingResult processFacebookOrders(List<Object> facebookOrderObjects) {
         ProcessingResult result = ProcessingResult.builder().build();
 
@@ -197,7 +244,6 @@ public class BatchProcessor {
     /**
      * TIKTOK: Process TikTok orders using TikTokMapper
      */
-    @Transactional
     public ProcessingResult processTikTokOrders(List<Object> tikTokOrderObjects) {
         ProcessingResult result = ProcessingResult.builder().build();
 
@@ -286,7 +332,6 @@ public class BatchProcessor {
     /**
      * TIKTOK: Process TikTok orders using TikTokMapper
      */
-    @Transactional
     public ProcessingResult processShopeeOrders(List<Object> shopeeOrderObjects) {
         ProcessingResult result = ProcessingResult.builder().build();
 
@@ -540,10 +585,13 @@ public class BatchProcessor {
 
     private List<Customer> mapTikTokCustomers(List<FacebookOrderDto> orders, ProcessingResult result) {
         return orders.stream()
+                .filter(order -> order.getCustomer() != null && order.getCustomer().getId() != null)
                 .map(order -> {
                     try {
                         return tikTokMapper.mapToCustomer(order);
                     } catch (Exception e) {
+                        log.error("Failed mapping TikTok customer for order {}: {}",
+                                order.getOrderId(), e.getMessage());
                         result.getErrors().add(ErrorReport.of("TIKTOK_CUSTOMER", order.getOrderId(), "TIKTOK", e));
                         return null;
                     }
@@ -562,9 +610,9 @@ public class BatchProcessor {
         return orders.stream()
                 .map(order -> {
                     try {
-                        Order newOrder = tikTokMapper.mapToOrder(order);
-                        return newOrder;
+                        return tikTokMapper.mapToOrder(order);
                     } catch (Exception e) {
+                        log.error("Failed mapping TikTok order {}: {}", order.getOrderId(), e.getMessage());
                         result.getErrors().add(ErrorReport.of("TIKTOK_ORDER", order.getOrderId(), "TIKTOK", e));
                         return null;
                     }

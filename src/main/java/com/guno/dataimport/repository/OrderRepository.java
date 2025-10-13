@@ -27,43 +27,48 @@ public class OrderRepository {
     private final JdbcTemplate jdbcTemplate;
 
     private static final String UPSERT_SQL = """
-        INSERT INTO tbl_order (
-            order_id, customer_id, shop_id, internal_uuid, order_count, item_quantity,
-            total_items_in_order, gross_revenue, net_revenue, shipping_fee, tax_amount,
-            discount_amount, cod_amount, platform_fee, seller_discount, platform_discount,
-            original_price, estimated_shipping_fee, actual_shipping_fee, shipping_weight_gram,
-            days_to_ship, is_delivered, is_cancelled, is_returned, is_cod, is_new_customer,
-            is_repeat_customer, is_bulk_order, is_promotional_order, is_same_day_delivery,
-            order_to_ship_hours, ship_to_delivery_hours, total_fulfillment_hours,
-            customer_order_sequence, customer_lifetime_orders, customer_lifetime_value,
-            days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
-            aov, shipping_cost_ratio, created_at, raw_data, platform_specific_data
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (order_id) DO UPDATE SET
-            shop_id = EXCLUDED.shop_id,
-            item_quantity = EXCLUDED.item_quantity,
-            gross_revenue = EXCLUDED.gross_revenue,
-            net_revenue = EXCLUDED.net_revenue,
-            shipping_fee = EXCLUDED.shipping_fee,
-            is_delivered = EXCLUDED.is_delivered,
-            is_cancelled = EXCLUDED.is_cancelled,
-            is_returned = EXCLUDED.is_returned
-        """;
+    INSERT INTO tbl_order (
+        order_id, customer_id, shop_id, internal_uuid, order_count, item_quantity,
+        total_items_in_order, gross_revenue, net_revenue, shipping_fee, tax_amount,
+        discount_amount, cod_amount, platform_fee, seller_discount, platform_discount,
+        original_price, estimated_shipping_fee, actual_shipping_fee, shipping_weight_gram,
+        days_to_ship, is_delivered, is_cancelled, is_returned, is_cod, is_new_customer,
+        is_repeat_customer, is_bulk_order, is_promotional_order, is_same_day_delivery,
+        order_to_ship_hours, ship_to_delivery_hours, total_fulfillment_hours,
+        customer_order_sequence, customer_lifetime_orders, customer_lifetime_value,
+        days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
+        aov, shipping_cost_ratio, created_at, raw_data, platform_specific_data,
+        seller_id, seller_name, seller_email                                    // NEW
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)  // 45 → 48 params
+    ON CONFLICT (order_id) DO UPDATE SET
+        shop_id = EXCLUDED.shop_id,
+        item_quantity = EXCLUDED.item_quantity,
+        gross_revenue = EXCLUDED.gross_revenue,
+        net_revenue = EXCLUDED.net_revenue,
+        shipping_fee = EXCLUDED.shipping_fee,
+        is_delivered = EXCLUDED.is_delivered,
+        is_cancelled = EXCLUDED.is_cancelled,
+        is_returned = EXCLUDED.is_returned,
+        seller_id = EXCLUDED.seller_id,                                         // NEW
+        seller_name = EXCLUDED.seller_name,                                     // NEW
+        seller_email = EXCLUDED.seller_email                                    // NEW
+    """;
 
     private static final String COPY_SQL = """
-        COPY tbl_order (
-            order_id, customer_id, shop_id, internal_uuid, order_count, item_quantity,
-            total_items_in_order, gross_revenue, net_revenue, shipping_fee, tax_amount,
-            discount_amount, cod_amount, platform_fee, seller_discount, platform_discount,
-            original_price, estimated_shipping_fee, actual_shipping_fee, shipping_weight_gram,
-            days_to_ship, is_delivered, is_cancelled, is_returned, is_cod, is_new_customer,
-            is_repeat_customer, is_bulk_order, is_promotional_order, is_same_day_delivery,
-            order_to_ship_hours, ship_to_delivery_hours, total_fulfillment_hours,
-            customer_order_sequence, customer_lifetime_orders, customer_lifetime_value,
-            days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
-            aov, shipping_cost_ratio, created_at, raw_data, platform_specific_data
-        ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
-        """;
+    COPY tbl_order (
+        order_id, customer_id, shop_id, internal_uuid, order_count, item_quantity,
+        total_items_in_order, gross_revenue, net_revenue, shipping_fee, tax_amount,
+        discount_amount, cod_amount, platform_fee, seller_discount, platform_discount,
+        original_price, estimated_shipping_fee, actual_shipping_fee, shipping_weight_gram,
+        days_to_ship, is_delivered, is_cancelled, is_returned, is_cod, is_new_customer,
+        is_repeat_customer, is_bulk_order, is_promotional_order, is_same_day_delivery,
+        order_to_ship_hours, ship_to_delivery_hours, total_fulfillment_hours,
+        customer_order_sequence, customer_lifetime_orders, customer_lifetime_value,
+        days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
+        aov, shipping_cost_ratio, created_at, raw_data, platform_specific_data,
+        seller_id, seller_name, seller_email                                    // NEW
+    ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
+    """;
 
     /**
      * OPTIMIZED: Bulk upsert with COPY FROM fallback
@@ -190,7 +195,7 @@ public class OrderRepository {
                         order.getCustomerLifetimeOrders(), order.getCustomerLifetimeValue(), order.getDaysSinceLastOrder(),
                         order.getPromotionImpact(), order.getAdRevenue(), order.getOrganicRevenue(), order.getAov(),
                         order.getShippingCostRatio(), CsvFormatter.formatDateTime(order.getCreatedAt()),
-                        order.getRawData(), order.getPlatformSpecificData()
+                        order.getRawData(), order.getPlatformSpecificData(), order.getSellerId(), order.getSellerName(), order.getSellerEmail()
                 ))
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
@@ -203,17 +208,20 @@ public class OrderRepository {
 
     private Object[] mapToParams(Order o) {
         return new Object[]{
-                o.getOrderId(), o.getCustomerId(), o.getShopId(), o.getInternalUuid(), o.getOrderCount(),
-                o.getItemQuantity(), o.getTotalItemsInOrder(), o.getGrossRevenue(), o.getNetRevenue(),
-                o.getShippingFee(), o.getTaxAmount(), o.getDiscountAmount(), o.getCodAmount(), o.getPlatformFee(),
-                o.getSellerDiscount(), o.getPlatformDiscount(), o.getOriginalPrice(), o.getEstimatedShippingFee(),
-                o.getActualShippingFee(), o.getShippingWeightGram(), o.getDaysToShip(), o.getIsDelivered(),
-                o.getIsCancelled(), o.getIsReturned(), o.getIsCod(), o.getIsNewCustomer(), o.getIsRepeatCustomer(),
-                o.getIsBulkOrder(), o.getIsPromotionalOrder(), o.getIsSameDayDelivery(), o.getOrderToShipHours(),
+                o.getOrderId(), o.getCustomerId(), o.getShopId(), o.getInternalUuid(),
+                o.getOrderCount(), o.getItemQuantity(), o.getTotalItemsInOrder(),
+                o.getGrossRevenue(), o.getNetRevenue(), o.getShippingFee(), o.getTaxAmount(),
+                o.getDiscountAmount(), o.getCodAmount(), o.getPlatformFee(), o.getSellerDiscount(),
+                o.getPlatformDiscount(), o.getOriginalPrice(), o.getEstimatedShippingFee(),
+                o.getActualShippingFee(), o.getShippingWeightGram(), o.getDaysToShip(),
+                o.getIsDelivered(), o.getIsCancelled(), o.getIsReturned(), o.getIsCod(),
+                o.getIsNewCustomer(), o.getIsRepeatCustomer(), o.getIsBulkOrder(),
+                o.getIsPromotionalOrder(), o.getIsSameDayDelivery(), o.getOrderToShipHours(),
                 o.getShipToDeliveryHours(), o.getTotalFulfillmentHours(), o.getCustomerOrderSequence(),
                 o.getCustomerLifetimeOrders(), o.getCustomerLifetimeValue(), o.getDaysSinceLastOrder(),
-                o.getPromotionImpact(), o.getAdRevenue(), o.getOrganicRevenue(), o.getAov(), o.getShippingCostRatio(),
-                o.getCreatedAt(), o.getRawData(), o.getPlatformSpecificData()
+                o.getPromotionImpact(), o.getAdRevenue(), o.getOrganicRevenue(), o.getAov(),
+                o.getShippingCostRatio(), o.getCreatedAt(), o.getRawData(), o.getPlatformSpecificData(),
+                o.getSellerId(), o.getSellerName(), o.getSellerEmail()
         };
     }
 
@@ -265,6 +273,9 @@ public class OrderRepository {
                         rs.getTimestamp("created_at").toLocalDateTime() : null)
                 .rawData(rs.getInt("raw_data"))
                 .platformSpecificData(rs.getInt("platform_specific_data"))
+                .sellerId(rs.getString("seller_id"))
+                .sellerName(rs.getString("seller_name"))
+                .sellerEmail(rs.getString("seller_email"))
                 .build();
     }
 }

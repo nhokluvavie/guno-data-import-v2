@@ -11,7 +11,7 @@ import java.util.List;
 
 /**
  * Facebook Order DTO - Main order entity from Facebook API
- * Note: Order data is nested in "data" field in API response
+ * UPDATED: Added seller fields (account_name, assigning_seller)
  */
 @Data
 @Builder
@@ -24,14 +24,15 @@ public class FacebookOrderDto {
     private String orderId;
 
     @JsonProperty("status")
-    private Integer status; // Main order status
+    private Integer status;
 
     @JsonProperty("data")
-    private FacebookOrderData data; // Nested order data
+    private FacebookOrderData data;
 
-    // Helper methods to access nested data
+    // ========== HELPER METHODS ==========
+
     public String getOrderId() {
-        return data != null ? data.getId().toString() : orderId;
+        return data != null ? data.getId() : orderId;
     }
 
     public Long getCod() {
@@ -75,29 +76,42 @@ public class FacebookOrderDto {
     }
 
     public String getNewProvinceName() {
-        return data != null ? data.getShippingAddress() != null ?
-                data.getShippingAddress().getProvinceName() : null : null;
+        return data != null && data.getShippingAddress() != null
+                ? data.getShippingAddress().getProvinceName() : null;
     }
 
     public String getNewDistrictName() {
-        return data != null ? data.getShippingAddress() != null ?
-                data.getShippingAddress().getDistrictName() : null : null;
+        return data != null && data.getShippingAddress() != null
+                ? data.getShippingAddress().getDistrictName() : null;
     }
 
     public String getAdId() {
         return data != null ? data.getAdId() : null;
     }
 
-    public Integer getStatus() {
-        return status; // Main status
-    }
-
     public Integer getNestedStatus() {
-        return data != null ? data.getStatus() : null; // Nested status
+        return data != null ? data.getStatus() : null;
     }
 
     public String getStatusName() {
         return data != null ? data.getStatusName() : null;
+    }
+
+    // NEW - Seller fields
+    public String getAccountName() {
+        return data != null ? data.getAccountName() : null;
+    }
+
+    public AssigningSeller getAssigningSeller() {
+        return data != null ? data.getAssigningSeller() : null;
+    }
+
+    public Integer getSubStatus() {
+        return data != null ? data.getSubStatus() : null;
+    }
+
+    public List<TrackingHistory> getTrackingHistories() {
+        return data != null ? data.getTrackingHistories() : new ArrayList<>();
     }
 
     public boolean isCodOrder() {
@@ -108,6 +122,8 @@ public class FacebookOrderDto {
         Long total = getTotalPriceAfterSubDiscount();
         return total != null ? total.doubleValue() : 0.0;
     }
+
+    // ========== NESTED CLASSES ==========
 
     @Data
     @Builder
@@ -162,14 +178,63 @@ public class FacebookOrderDto {
         @JsonProperty("status_name")
         private String statusName;
 
-        @Data
-        @JsonIgnoreProperties(ignoreUnknown = true)
-        public static class ShippingAddress {
-            @JsonProperty("province_name")
-            private String provinceName;
+        // NEW FIELDS
+        @JsonProperty("account_name")
+        private String accountName;
 
-            @JsonProperty("district_name")
-            private String districtName;
-        }
+        @JsonProperty("assigning_seller")
+        private AssigningSeller assigningSeller;
+
+        @JsonProperty("sub_status")
+        private Integer subStatus;
+
+        @JsonProperty("tracking_histories")
+        @Builder.Default
+        private List<TrackingHistory> trackingHistories = new ArrayList<>();
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ShippingAddress {
+        @JsonProperty("province_name")
+        private String provinceName;
+
+        @JsonProperty("district_name")
+        private String districtName;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class AssigningSeller {
+        @JsonProperty("id")
+        private String id;
+
+        @JsonProperty("name")
+        private String name;
+
+        @JsonProperty("email")
+        private String email;
+
+        @JsonProperty("fb_id")
+        private String fbId;
+
+        @JsonProperty("phone_number")
+        private String phoneNumber;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class TrackingHistory {
+        @JsonProperty("partner_status")
+        private String partnerStatus;
+
+        @JsonProperty("status")
+        private String status;
+
+        @JsonProperty("update_at")
+        private String updateAt;
+
+        @JsonProperty("tracking_id")
+        private String trackingId;
     }
 }

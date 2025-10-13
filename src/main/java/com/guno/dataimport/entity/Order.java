@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 
 /**
  * Order Entity - Maps to tbl_order table
+ * UPDATED: Added seller fields for schema_new.sql
  */
 @Data
 @Builder
@@ -66,4 +67,9 @@ public class Order {
     private LocalDateTime createdAt;
     private Integer rawData;
     private Integer platformSpecificData;
+
+    // NEW FIELDS for schema_new.sql
+    private String sellerId;      // seller_id
+    private String sellerName;    // seller_name
+    private String sellerEmail;   // seller_email
 }

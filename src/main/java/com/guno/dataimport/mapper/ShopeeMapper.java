@@ -101,8 +101,11 @@ public class ShopeeMapper {
                 .adRevenue(hasAd(order.getAdId()) ? totalAmount : 0.0)
                 .organicRevenue(hasAd(order.getAdId()) ? 0.0 : totalAmount)
                 .aov(totalAmount)
-                .shippingCostRatio(calculateRatio(safeDouble(order.getShippingFee()), totalAmount))
                 .createdAt(parseDateTime(order.getCreatedAt()))
+                // NEW FIELDS - Seller information
+                .sellerId(extractSellerId(order))
+                .sellerName(extractSellerName(order))
+                .sellerEmail(extractSellerEmail(order))
                 .build();
     }
 
@@ -270,12 +273,18 @@ public class ShopeeMapper {
         if (order == null) return new ArrayList<>();
 
         List<OrderStatus> orderStatuses = new ArrayList<>();
-
         Integer currentStatus = order.getStatus();
+
         if (currentStatus != null) {
+            // Extract sub_status_id and partner_status_id
+            String subStatusId = extractSubStatusId(order);
+            String partnerStatusId = extractPartnerStatusId(order);
+
             OrderStatus orderStatus = OrderStatus.builder()
                     .statusKey((long) currentStatus)
                     .orderId(order.getOrderId())
+                    .subStatusId(subStatusId)                    // NEW
+                    .partnerStatusId(partnerStatusId)            // NEW
                     .transitionDateKey(getCurrentDateKey())
                     .transitionTimestamp(parseDateTime(order.getCreatedAt()))
                     .durationInPreviousStatusHours(0)
@@ -285,6 +294,7 @@ public class ShopeeMapper {
                     .isOnTimeTransition(true)
                     .isExpectedTransition(true)
                     .historyKey(generateKey("HIST_" + order.getOrderId()))
+                    .createdAt(order.getCreatedAt())             // NEW
                     .build();
             orderStatuses.add(orderStatus);
         }
@@ -692,5 +702,146 @@ public class ShopeeMapper {
             case -1: return "CANCELLED";
             default: return "STATUS_" + status;
         }
+    }
+
+    /**
+     * Extract seller ID from assigning_seller or default
+     */
+    private String extractSellerId(FacebookOrderDto order) {
+        if (order.getAssigningSeller() != null && order.getAssigningSeller().getId() != null) {
+            return order.getAssigningSeller().getId();
+        }
+        return "UNKNOWN";
+    }
+
+    /**
+     * Extract seller name from account_name (primary) or assigning_seller.name (fallback)
+     */
+    private String extractSellerName(FacebookOrderDto order) {
+        // Priority 1: account_name
+        if (order.getAccountName() != null && !order.getAccountName().trim().isEmpty()) {
+            return order.getAccountName().trim();
+        }
+        // Priority 2: assigning_seller.name
+        if (order.getAssigningSeller() != null && order.getAssigningSeller().getName() != null) {
+            return order.getAssigningSeller().getName();
+        }
+        return "UNKNOWN";
+    }
+
+    /**
+     * Extract seller email from assigning_seller or default
+     */
+    private String extractSellerEmail(FacebookOrderDto order) {
+        if (order.getAssigningSeller() != null && order.getAssigningSeller().getEmail() != null) {
+            return order.getAssigningSeller().getEmail();
+        }
+        return "UNKNOWN";
+    }
+
+    /**
+     * Map Facebook order to SubStatus entities (master data)
+     */
+    public List<SubStatus> mapToSubStatus(FacebookOrderDto order) {
+        if (order == null) return new ArrayList<>();
+
+        List<SubStatus> subStatuses = new ArrayList<>();
+        Integer subStatus = order.getSubStatus();
+
+        if (subStatus != null) {
+            SubStatus status = SubStatus.builder()
+                    .id(subStatus.toString())
+                    .subStatusName(mapSubStatusName(subStatus))
+                    .build();
+            subStatuses.add(status);
+        }
+
+        return subStatuses;
+    }
+
+    /**
+     * Map Facebook order to PartnerStatus entities (master data from tracking)
+     */
+    public List<PartnerStatus> mapToPartnerStatus(FacebookOrderDto order) {
+        if (order == null) return new ArrayList<>();
+
+        List<PartnerStatus> partnerStatuses = new ArrayList<>();
+
+        // Extract unique partner statuses from tracking histories
+        order.getTrackingHistories().stream()
+                .map(FacebookOrderDto.TrackingHistory::getPartnerStatus)
+                .filter(ps -> ps != null && !ps.trim().isEmpty())
+                .distinct()
+                .forEach(ps -> {
+                    PartnerStatus status = PartnerStatus.builder()
+                            .id(ps.trim().toLowerCase())
+                            .partnerStatusName(ps.trim())
+                            .isReturned(isReturnedStatus(ps))
+                            .build();
+                    partnerStatuses.add(status);
+                });
+
+        // If no tracking history, use default
+        if (partnerStatuses.isEmpty()) {
+            partnerStatuses.add(PartnerStatus.builder()
+                    .id("unknown")
+                    .partnerStatusName("UNKNOWN")
+                    .isReturned(false)
+                    .build());
+        }
+
+        return partnerStatuses;
+    }
+
+// ========== HELPER METHODS ==========
+
+    /**
+     * Extract sub_status_id from order
+     */
+    private String extractSubStatusId(FacebookOrderDto order) {
+        Integer subStatus = order.getSubStatus();
+        return subStatus != null ? subStatus.toString() : "0";
+    }
+
+    /**
+     * Extract partner_status_id from tracking histories (latest)
+     */
+    private String extractPartnerStatusId(FacebookOrderDto order) {
+        List<FacebookOrderDto.TrackingHistory> histories = order.getTrackingHistories();
+
+        if (histories != null && !histories.isEmpty()) {
+            // Get latest partner status
+            String partnerStatus = histories.get(0).getPartnerStatus();
+            if (partnerStatus != null && !partnerStatus.trim().isEmpty()) {
+                return partnerStatus.trim().toLowerCase();
+            }
+        }
+
+        return "unknown";
+    }
+
+    /**
+     * Map sub_status integer to name
+     */
+    private String mapSubStatusName(Integer subStatus) {
+        return switch (subStatus) {
+            case 0 -> "PENDING";
+            case 1 -> "CONFIRMED";
+            case 2 -> "PROCESSING";
+            case 3 -> "SHIPPING";
+            case 4 -> "DELIVERED";
+            case -1 -> "CANCELLED";
+            default -> "UNKNOWN_" + subStatus;
+        };
+    }
+
+    /**
+     * Check if partner status indicates return
+     */
+    private boolean isReturnedStatus(String partnerStatus) {
+        if (partnerStatus == null) return false;
+        String ps = partnerStatus.toLowerCase();
+        return ps.contains("return") || ps.contains("returned") ||
+                ps.equals("undeliverable") || ps.contains("refused");
     }
 }

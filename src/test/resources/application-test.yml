@@ -25,7 +25,12 @@ spring:
       pool:
         size: 2
 
-# Test API Configuration - Same as production for real API testing
+# ✅ NEW: Unified Test Data Configuration
+test:
+  data:
+    date: "2025-07-14"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
+
+# Test API Configuration - Use unified date
 api:
   facebook:
     base-url: https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search
@@ -33,11 +38,11 @@ api:
       Authorization: x-webhook-api-key
       X-API-Key: iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr
     timeout-seconds: 300
-    page-size: 3000  # Smaller page size for testing
+    page-size: 3000
     max-retries: 3
     retry-delay-ms: 1000
-    default-date: "2025-08-13"  # Configurable date for testing
-    source: "facebook"       # Default source
+    default-date: ${test.data.date}  # ✅ Use unified date
+    source: "facebook"
     filter-date: "insert"
 
   tiktok:
@@ -49,7 +54,7 @@ api:
     page-size: 5000
     max-retries: 3
     retry-delay-ms: 1000
-    default-date: "2025-08-08"
+    default-date: ${test.data.date}  # ✅ Use unified date
     source: "tiktok"
     filter-date: "insert"
 
@@ -62,11 +67,10 @@ api:
     page-size: 5000
     max-retries: 3
     retry-delay-ms: 1000
-    default-date: "2025-08-13"
+    default-date: ${test.data.date}  # ✅ Use unified date
     source: "shopee"
     filter-date: "insert"
 
-  # Common API settings for test
   common:
     connect-timeout-ms: 10000
     read-timeout-ms: 30000
@@ -74,29 +78,29 @@ api:
 # Test Processing Configuration
 processing:
   parallel:
-    enabled: false  # Disable parallel for simpler testing
+    enabled: false
     thread-pool-size: 5
     timeout-minutes: 10
 
   batch:
-    size: 1000  # Smaller batch size for testing
+    size: 1000
     enabled: true
     max-batch-size: 5000
 
   validation:
     enabled: true
-    skip-invalid-records: false  # Strict validation in tests
+    skip-invalid-records: false
 
   bulk-insert:
     preferred-method: COPY_FROM
     fallback-method: MULTI_VALUE
     copy-batch-size: 10000
 
-# Disable scheduler for tests
+# Scheduler Configuration
 scheduler:
   import:
-    enabled: false  # Don't run scheduled jobs during tests
-    cron: "0 0 */6 * * *"
+    enabled: false
+    cron: "0 */5 * * * *"
     use-parallel: false
     auto-start: false
 
@@ -105,12 +109,12 @@ logging:
   level:
     com.guno.dataimport: DEBUG
     org.springframework.jdbc: DEBUG
-    org.springframework.web.client: DEBUG  # Log HTTP requests
-    com.guno.dataimport.api.client.FacebookApiClient: DEBUG
+    org.springframework.web.client: DEBUG
+    org.springframework.scheduling: DEBUG
   pattern:
     console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
 
-# Management endpoints for test monitoring
+# Management endpoints
 management:
   endpoints:
     web:

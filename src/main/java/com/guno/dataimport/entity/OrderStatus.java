@@ -21,7 +21,7 @@ public class OrderStatus {
     private Long statusKey;
     private String orderId;
     private String subStatusId;        // NEW - NOT NULL
-    private String partnerStatusId;    // NEW - NOT NULL
+    private Integer partnerStatusId;    // NEW - NOT NULL
 
     @Builder.Default private Integer transitionDateKey = 0;
     private LocalDateTime transitionTimestamp;

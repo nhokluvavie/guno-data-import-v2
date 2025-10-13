@@ -4,6 +4,7 @@ import com.guno.dataimport.dto.platform.facebook.FacebookCustomer;
 import com.guno.dataimport.dto.platform.facebook.FacebookItemDto;
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
 import com.guno.dataimport.entity.*;
+import com.guno.dataimport.util.PartnerStatusMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -278,7 +279,7 @@ public class ShopeeMapper {
         if (currentStatus != null) {
             // Extract sub_status_id and partner_status_id
             String subStatusId = extractSubStatusId(order);
-            String partnerStatusId = extractPartnerStatusId(order);
+            Integer partnerStatusId = extractPartnerStatusId(order);
 
             OrderStatus orderStatus = OrderStatus.builder()
                     .statusKey((long) currentStatus)
@@ -371,6 +372,63 @@ public class ShopeeMapper {
                 .seasonName(getSeason(createdAt))
                 .isPeakHour(isPeakHour(createdAt))
                 .build();
+    }
+
+    /**
+     * Map Facebook order to SubStatus entities (master data)
+     */
+    public List<SubStatus> mapToSubStatus(FacebookOrderDto order) {
+        if (order == null) return new ArrayList<>();
+
+        List<SubStatus> subStatuses = new ArrayList<>();
+        Integer subStatus = order.getSubStatus();
+
+        if (subStatus != null) {
+            SubStatus status = SubStatus.builder()
+                    .id(subStatus.toString())
+                    .subStatusName(mapSubStatusName(subStatus))
+                    .build();
+            subStatuses.add(status);
+        }
+
+        return subStatuses;
+    }
+
+    /**
+     * Map Facebook order to PartnerStatus entities (master data from tracking)
+     * UPDATED: Use Integer ID and stage field
+     */
+    public List<PartnerStatus> mapToPartnerStatus(FacebookOrderDto order) {
+        if (order == null) return new ArrayList<>();
+
+        List<PartnerStatus> partnerStatuses = new ArrayList<>();
+
+        // Extract unique partner statuses from tracking histories
+        order.getTrackingHistories().stream()
+                .map(FacebookOrderDto.TrackingHistory::getPartnerStatus)
+                .filter(ps -> ps != null && !ps.trim().isEmpty())
+                .distinct()
+                .forEach(ps -> {
+                    Integer statusId = PartnerStatusMapper.mapToId(ps);
+
+                    PartnerStatus status = PartnerStatus.builder()
+                            .id(statusId)  // CHANGED: Integer instead of String
+                            .partnerStatusName(PartnerStatusMapper.mapToName(statusId))
+                            .stage(PartnerStatusMapper.mapToStage(statusId))  // NEW field
+                            .build();
+                    partnerStatuses.add(status);
+                });
+
+        // If no tracking history, use default
+        if (partnerStatuses.isEmpty()) {
+            partnerStatuses.add(PartnerStatus.builder()
+                    .id(0)  // Unknown
+                    .partnerStatusName("Unknown")
+                    .stage("Unknown")
+                    .build());
+        }
+
+        return partnerStatuses;
     }
 
     // IMPROVED: Consolidated helper methods with better null/empty handling
@@ -740,62 +798,6 @@ public class ShopeeMapper {
     }
 
     /**
-     * Map Facebook order to SubStatus entities (master data)
-     */
-    public List<SubStatus> mapToSubStatus(FacebookOrderDto order) {
-        if (order == null) return new ArrayList<>();
-
-        List<SubStatus> subStatuses = new ArrayList<>();
-        Integer subStatus = order.getSubStatus();
-
-        if (subStatus != null) {
-            SubStatus status = SubStatus.builder()
-                    .id(subStatus.toString())
-                    .subStatusName(mapSubStatusName(subStatus))
-                    .build();
-            subStatuses.add(status);
-        }
-
-        return subStatuses;
-    }
-
-    /**
-     * Map Facebook order to PartnerStatus entities (master data from tracking)
-     */
-    public List<PartnerStatus> mapToPartnerStatus(FacebookOrderDto order) {
-        if (order == null) return new ArrayList<>();
-
-        List<PartnerStatus> partnerStatuses = new ArrayList<>();
-
-        // Extract unique partner statuses from tracking histories
-        order.getTrackingHistories().stream()
-                .map(FacebookOrderDto.TrackingHistory::getPartnerStatus)
-                .filter(ps -> ps != null && !ps.trim().isEmpty())
-                .distinct()
-                .forEach(ps -> {
-                    PartnerStatus status = PartnerStatus.builder()
-                            .id(ps.trim().toLowerCase())
-                            .partnerStatusName(ps.trim())
-                            .isReturned(isReturnedStatus(ps))
-                            .build();
-                    partnerStatuses.add(status);
-                });
-
-        // If no tracking history, use default
-        if (partnerStatuses.isEmpty()) {
-            partnerStatuses.add(PartnerStatus.builder()
-                    .id("unknown")
-                    .partnerStatusName("UNKNOWN")
-                    .isReturned(false)
-                    .build());
-        }
-
-        return partnerStatuses;
-    }
-
-// ========== HELPER METHODS ==========
-
-    /**
      * Extract sub_status_id from order
      */
     private String extractSubStatusId(FacebookOrderDto order) {
@@ -805,19 +807,20 @@ public class ShopeeMapper {
 
     /**
      * Extract partner_status_id from tracking histories (latest)
+     * UPDATED: Return Integer ID instead of String
      */
-    private String extractPartnerStatusId(FacebookOrderDto order) {
+    private Integer extractPartnerStatusId(FacebookOrderDto order) {
         List<FacebookOrderDto.TrackingHistory> histories = order.getTrackingHistories();
 
         if (histories != null && !histories.isEmpty()) {
             // Get latest partner status
             String partnerStatus = histories.get(0).getPartnerStatus();
             if (partnerStatus != null && !partnerStatus.trim().isEmpty()) {
-                return partnerStatus.trim().toLowerCase();
+                return PartnerStatusMapper.mapToId(partnerStatus);  // Use utility
             }
         }
 
-        return "unknown";
+        return 0; // Unknown
     }
 
     /**

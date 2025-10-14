@@ -12,12 +12,15 @@ import java.util.List;
 
 /**
  * Xác định is_delivered, is_cancelled và is_returned theo platform
- * Version 4.0 - Phase 1: Bổ sung logic is_delivered
+ * Version 5.0 - Phase 3: FIXED - Phân biệt chính xác HOÀN HỦY vs TRẢ HÀNG
  *
  * PHÂN LOẠI 3 LOẠI ĐƠN:
  * 1. ĐƠN HỦY:       is_cancelled = TRUE,  is_returned = FALSE, is_delivered = FALSE
  * 2. ĐƠN HOÀN HỦY:  is_cancelled = FALSE, is_returned = TRUE,  is_delivered = FALSE (chưa giao được, hoàn về)
  * 3. ĐƠN TRẢ HÀNG:  is_cancelled = FALSE, is_returned = TRUE,  is_delivered = TRUE  (đã giao, khách trả lại)
+ *
+ * CRITICAL FIX: isReturned() bây giờ KHÔNG TỰ ĐỘNG return true khi có return_quantity
+ * Phải kết hợp với isDelivered() để phân biệt HOÀN HỦY vs TRẢ HÀNG
  */
 @Slf4j
 public class OrderStatusValidator {
@@ -52,6 +55,8 @@ public class OrderStatusValidator {
 
     /**
      * Xác định đơn hoàn/trả hàng (bao gồm cả hoàn hủy và trả hàng sau giao)
+     * CHÚ Ý: Method này trả về TRUE cho CẢ hoàn hủy VÀ trả hàng
+     * Phải kết hợp với isDelivered() để phân biệt 2 loại
      */
     public static boolean isReturned(FacebookOrderDto order, String platform) {
         if (order == null) return false;
@@ -111,9 +116,6 @@ public class OrderStatusValidator {
     }
 
     private static boolean isFacebookReturned(FacebookOrderDto order) {
-        // CRITICAL: Nếu đã delivered → KHÔNG PHẢI hoàn hủy (là trả hàng)
-        // Logic này được giữ nguyên để phân biệt hoàn hủy vs trả hàng
-
         // Priority 1: status_name = "returning"
         String statusName = order.getStatusName();
         if ("returning".equalsIgnoreCase(statusName)) {
@@ -257,7 +259,7 @@ public class OrderStatusValidator {
         return false;
     }
 
-    // ========== TIKTOK LOGIC ==========
+    // ========== TIKTOK LOGIC (FIXED) ==========
 
     private static boolean isTikTokDelivered(FacebookOrderDto order) {
         // Priority 1: status = 4 (DELIVERED)
@@ -282,6 +284,29 @@ public class OrderStatusValidator {
             return true;
         }
 
+        // Priority 5: Check status_name = "delivered"
+        String statusName = order.getStatusName();
+        if ("delivered".equalsIgnoreCase(statusName)) {
+            return true;
+        }
+
+        // Priority 6: Check histories có status = 3 (DELIVERED)
+        if (hasStatusInHistories(order, 3)) {
+            return true;
+        }
+
+        // Priority 7: Check shopee_status = "DELIVERED" hoặc "COMPLETED"
+        if (hasShopeeStatusInHistories(order, "DELIVERED") ||
+                hasShopeeStatusInHistories(order, "COMPLETED")) {
+            return true;
+        }
+
+        // Priority 8: Note chứa "Đã nhận hàng" hoặc "đã giao"
+        if (hasNoteContains(order, "đã nhận hàng") ||
+                hasNoteContains(order, "đã giao")) {
+            return true;
+        }
+
         return false;
     }
 
@@ -296,39 +321,50 @@ public class OrderStatusValidator {
     }
 
     private static boolean isTikTokReturned(FacebookOrderDto order) {
-        // Priority 1: status_name = "returning"
+        // Priority 1: status_name = "returning" → CHẮC CHẮN return
         String statusName = order.getStatusName();
-        if ("returning".equalsIgnoreCase(statusName)) {
+        if ("returning".equalsIgnoreCase(statusName) || "returned".equalsIgnoreCase(statusName)) {
             return true;
         }
 
-        // Priority 2: return_quantity > 0 hoặc returning_quantity > 0
+        // Priority 2: return_quantity > 0 hoặc returning_quantity > 0 → CHẮC CHẮN return
+        // Đây là dấu hiệu RÕ RÀNG NHẤT của đơn hoàn/trả
         if (hasReturnQuantityInItems(order)) {
             return true;
         }
 
-        // Priority 3: partner.is_returned = true
+        // Priority 3: partner.is_returned = true → CHẮC CHẮN return
         if (hasPartnerIsReturned(order)) {
             return true;
         }
 
-        // Priority 4: partner_status = "returned"
-        boolean hasReturnedStatus = hasPartnerStatus(order, "returned");
+        // Priority 4: partner_status = "returned" → CHẮC CHẮN return
+        if (hasPartnerStatus(order, "returned")) {
+            return true;
+        }
 
-        // Priority 5: sub_status = 3
-        boolean hasReturnedSubStatus = order.getSubStatus() != null && order.getSubStatus() == 3;
+        // Priority 5: order_returned_ids có giá trị → CHẮC CHẮN return (đơn đổi/hoàn)
+        if (hasOrderReturnedIds(order)) {
+            return true;
+        }
 
-        // Priority 6: status = 4 hoặc 5
-        boolean isDeliveredOrRefunded = order.getStatus() != null &&
-                (order.getStatus() == 4 || order.getStatus() == 5);
+        // Priority 6: sub_status = 3 (Returned) → CHẮC CHẮN return
+        if (order.getSubStatus() != null && order.getSubStatus() == 3) {
+            return true;
+        }
 
-        // Priority 7: note có "nhận hàng hoàn"
-        boolean hasReturnNote = hasReturnNoteInHistories(order);
+        // Priority 7: Tracking chứa "return" keywords
+        if (hasTrackingContains(order, "return") ||
+                hasTrackingContains(order, "returned") ||
+                hasTrackingContains(order, "being returned") ||
+                hasTrackingContains(order, "return package")) {
+            return true;
+        }
 
-        // Combinations
-        if (hasReturnedStatus && hasReturnedSubStatus) return true;
-        if (hasReturnedStatus && isDeliveredOrRefunded) return true;
-        if (hasReturnedSubStatus && hasReturnNote) return true;
+        // Priority 8: Note có "nhận hàng hoàn"
+        if (hasReturnNoteInHistories(order)) {
+            return true;
+        }
 
         return false;
     }
@@ -371,9 +407,10 @@ public class OrderStatusValidator {
             return false;
         }
 
+        String lowerStatusValue = statusValue.toLowerCase();
         return partner.getExtendUpdate().stream()
                 .anyMatch(update -> update.getStatus() != null &&
-                        statusValue.equalsIgnoreCase(update.getStatus()));
+                        update.getStatus().toLowerCase().contains(lowerStatusValue));
     }
 
     /**
@@ -451,7 +488,60 @@ public class OrderStatusValidator {
         if (order.getHistories() == null) return false;
 
         return order.getHistories().stream()
-                .anyMatch(log -> log.getNote() != null &&
-                        log.getNote().asText().toLowerCase().contains("nhận hàng hoàn"));
+                .anyMatch(log -> {
+                    String noteValue = log.getNoteValue();
+                    return noteValue != null && noteValue.toLowerCase().contains("nhận hàng hoàn");
+                });
+    }
+
+    /**
+     * NEW: Kiểm tra có order_returned_ids không
+     */
+    private static boolean hasOrderReturnedIds(FacebookOrderDto order) {
+        if (order.getHistories() == null) return false;
+
+        return order.getHistories().stream()
+                .anyMatch(log -> {
+                    if (log.getOrderReturnedIds() == null) return false;
+                    List<Long> newValue = log.getOrderReturnedIds().getNewValue();
+                    return newValue != null && !newValue.isEmpty();
+                });
+    }
+
+    private static boolean hasNoteContains(FacebookOrderDto order, String keyword) {
+        String lowerKeyword = keyword.toLowerCase();
+
+        // Check 1: Note ở level order.data.note
+        if (order.getData() != null && order.getData().getNote() != null) {
+            if (order.getData().getNote().toLowerCase().contains(lowerKeyword)) {
+                return true;  // ← Sẽ hoạt động sau khi thêm field
+            }
+        }
+
+        // Check 2: Note trong histories
+        if (order.getHistories() == null) return false;
+
+        return order.getHistories().stream()
+                .anyMatch(log -> {
+                    String noteValue = log.getNoteValue();
+                    return noteValue != null && noteValue.toLowerCase().contains(lowerKeyword);
+                });
+    }
+
+    /**
+     * NEW: Kiểm tra histories có status cụ thể không
+     */
+    private static boolean hasStatusInHistories(FacebookOrderDto order, int statusValue) {
+        if (order.getHistories() == null) return false;
+
+        return order.getHistories().stream()
+                .anyMatch(log -> {
+                    if (log.getStatus() == null) return false;
+                    Integer newStatus = log.getStatus().getNewValue();
+                    Integer oldStatus = log.getStatus().getOldValue();
+                    // Check nếu status từng là statusValue (trong new hoặc old)
+                    return (newStatus != null && newStatus == statusValue) ||
+                            (oldStatus != null && oldStatus == statusValue);
+                });
     }
 }

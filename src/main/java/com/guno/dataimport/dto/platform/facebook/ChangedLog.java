@@ -7,6 +7,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 /**
  * ChangedLog - Lịch sử thay đổi trạng thái đơn hàng
  * Mapping từ field "histories" trong JSON
@@ -40,6 +42,9 @@ public class ChangedLog {
 
     @JsonProperty("updated_at")
     private String updatedAt;
+
+    @JsonProperty("order_returned_ids")
+    private ValueChange<List<Long>> orderReturnedIds;
 
     // Helper method để lấy note value
     public String getNoteValue() {

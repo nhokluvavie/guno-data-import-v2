@@ -215,6 +215,9 @@ public class FacebookOrderDto {
 
         @JsonProperty("partner")
         private Partner partner;
+
+        @JsonProperty("note")
+        private String note;
     }
 
     @Data

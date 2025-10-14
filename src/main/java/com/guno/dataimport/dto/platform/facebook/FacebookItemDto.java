@@ -42,6 +42,13 @@ public class FacebookItemDto {
     @JsonProperty("variation_info")
     private VariationInfo variationInfo;
 
+    @JsonProperty("return_quantity")
+    private Integer returnQuantity;
+
+    @JsonProperty("returning_quantity")
+    private Integer returningQuantity;
+
+
     // Helper methods
     public String getSku() {
         return variationInfo != null ? variationInfo.getDisplayId() : null;
@@ -95,6 +102,14 @@ public class FacebookItemDto {
             return variationInfo.getImages().get(0);
         }
         return null;
+    }
+
+    public Integer getReturnQuantity() {
+        return returnQuantity;
+    }
+
+    public Integer getReturningQuantity() {
+        return returningQuantity;
     }
 
     @Data

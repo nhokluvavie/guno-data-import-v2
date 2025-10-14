@@ -133,6 +133,10 @@ public class FacebookOrderDto {
         return data != null ? data.getHistories() : new ArrayList<>();
     }
 
+    public Partner getPartner() {
+        return data != null ? data.getPartner() : null;
+    }
+
     // ========== NESTED CLASSES ==========
 
     @Data
@@ -208,6 +212,9 @@ public class FacebookOrderDto {
         @JsonProperty("histories")
         @Builder.Default
         private List<ChangedLog> histories = new ArrayList<>();
+
+        @JsonProperty("partner")
+        private Partner partner;
     }
 
     @Data
@@ -266,5 +273,38 @@ public class FacebookOrderDto {
 
         @JsonProperty("username")
         private String username;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Partner {
+        @JsonProperty("is_returned")
+        private Boolean isReturned;
+
+        @JsonProperty("partner_status")
+        private String partnerStatus;
+
+        @JsonProperty("extend_update")
+        @Builder.Default
+        private List<ExtendUpdate> extendUpdate = new ArrayList<>();
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ExtendUpdate {
+        @JsonProperty("status")
+        private String status;
+
+        @JsonProperty("updated_at")
+        private String updatedAt;
+
+        @JsonProperty("tracking_id")
+        private String trackingId;
     }
 }

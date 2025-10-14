@@ -153,27 +153,4 @@ public class ApiOrchestrator {
         log.info("Collecting multi-platform data with buffer optimization - BufferSize: {}", bufferSize);
         return bufferedDataCollector.collectMultiPlatformData(bufferSize);
     }
-
-    public String getProcessingStats() {
-        return String.format(
-                "ApiOrchestrator: Facebook API=%s, TikTok API=%s, Shopee API=%s, Executor=%s",
-                isFacebookApiAvailable() ? "Available" : "Unavailable",
-                isTikTokApiAvailable() ? "Available" : "Unavailable",
-                isShopeeApiAvailable() ? "Available" : "Unavailable",
-                executorService.isShutdown() ? "Shutdown" : "Active"
-        );
-    }
-
-    public boolean isSystemReady() {
-        try {
-            boolean batchReady = batchProcessor.isSystemReady();
-            boolean bufferedReady = bufferedDataCollector != null;
-            boolean clientsReady = facebookApiClient != null && tikTokApiClient != null && shopeeApiClient != null;
-
-            return batchReady && bufferedReady && clientsReady;
-        } catch (Exception e) {
-            log.warn("System readiness check failed: {}", e.getMessage());
-            return false;
-        }
-    }
 }

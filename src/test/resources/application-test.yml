@@ -28,7 +28,7 @@ spring:
 # ✅ NEW: Unified Test Data Configuration
 test:
   data:
-    date: "2025-07-14"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
+    date: "2025-10-13"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
 
 # Test API Configuration - Use unified date
 api:

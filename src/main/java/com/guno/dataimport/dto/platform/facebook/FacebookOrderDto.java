@@ -70,7 +70,7 @@ public class FacebookOrderDto {
     }
 
     public LocalDateTime getCreatedAt() {
-        return data != null ? data.getUpdateAt() : null;
+        return data != null ? LocalDateTime.parse(data.getUpdateAt()) : null;
     }
 
     public String getBillPhoneNumber() {

@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 
 /**
  * Order Repository - JDBC operations with COPY FROM optimization
+ * FIXED: NULL handling for rawData and platformSpecificData
  */
 @Repository
 @RequiredArgsConstructor
@@ -38,8 +39,8 @@ public class OrderRepository {
         customer_order_sequence, customer_lifetime_orders, customer_lifetime_value,
         days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
         aov, shipping_cost_ratio, created_at, raw_data, platform_specific_data,
-        seller_id, seller_name, seller_email                                    // NEW
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)  // 45 → 48 params
+        seller_id, seller_name, seller_email
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (order_id) DO UPDATE SET
         shop_id = EXCLUDED.shop_id,
         item_quantity = EXCLUDED.item_quantity,
@@ -49,9 +50,9 @@ public class OrderRepository {
         is_delivered = EXCLUDED.is_delivered,
         is_cancelled = EXCLUDED.is_cancelled,
         is_returned = EXCLUDED.is_returned,
-        seller_id = EXCLUDED.seller_id,                                         // NEW
-        seller_name = EXCLUDED.seller_name,                                     // NEW
-        seller_email = EXCLUDED.seller_email                                    // NEW
+        seller_id = EXCLUDED.seller_id,
+        seller_name = EXCLUDED.seller_name,
+        seller_email = EXCLUDED.seller_email
     """;
 
     private static final String COPY_SQL = """
@@ -66,7 +67,7 @@ public class OrderRepository {
         customer_order_sequence, customer_lifetime_orders, customer_lifetime_value,
         days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
         aov, shipping_cost_ratio, created_at, raw_data, platform_specific_data,
-        seller_id, seller_name, seller_email                                    // NEW
+        seller_id, seller_name, seller_email
     ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
     """;
 
@@ -177,6 +178,9 @@ public class OrderRepository {
         }
     }
 
+    /**
+     * FIXED: Handle NULL values for rawData and platformSpecificData
+     */
     private String generateCsvData(List<Order> orders) {
         return orders.stream()
                 .map(order -> CsvFormatter.joinCsvRow(
@@ -195,7 +199,9 @@ public class OrderRepository {
                         order.getCustomerLifetimeOrders(), order.getCustomerLifetimeValue(), order.getDaysSinceLastOrder(),
                         order.getPromotionImpact(), order.getAdRevenue(), order.getOrganicRevenue(), order.getAov(),
                         order.getShippingCostRatio(), CsvFormatter.formatDateTime(order.getCreatedAt()),
-                        order.getRawData(), order.getPlatformSpecificData(), order.getSellerId(), order.getSellerName(), order.getSellerEmail()
+                        order.getRawData() != null ? order.getRawData() : "",  // ← FIX: Handle NULL
+                        order.getPlatformSpecificData() != null ? order.getPlatformSpecificData() : "",  // ← FIX: Handle NULL
+                        order.getSellerId(), order.getSellerName(), order.getSellerEmail()
                 ))
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
@@ -269,10 +275,9 @@ public class OrderRepository {
                 .organicRevenue(rs.getDouble("organic_revenue"))
                 .aov(rs.getDouble("aov"))
                 .shippingCostRatio(rs.getDouble("shipping_cost_ratio"))
-                .createdAt(rs.getTimestamp("created_at") != null ?
-                        rs.getTimestamp("created_at").toLocalDateTime() : null)
-                .rawData(rs.getInt("raw_data"))
-                .platformSpecificData(rs.getInt("platform_specific_data"))
+                .createdAt(rs.getTimestamp("created_at") != null ? rs.getTimestamp("created_at").toLocalDateTime() : null)
+                .rawData(rs.getObject("raw_data", Integer.class))
+                .platformSpecificData(rs.getObject("platform_specific_data", Integer.class))
                 .sellerId(rs.getString("seller_id"))
                 .sellerName(rs.getString("seller_name"))
                 .sellerEmail(rs.getString("seller_email"))

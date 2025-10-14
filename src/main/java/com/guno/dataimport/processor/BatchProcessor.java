@@ -191,20 +191,22 @@ public class BatchProcessor {
 
             log.info("📘 Upserting Facebook entities via temp tables...");
 
-            // Master data first
+            // FIXED: Correct insert sequence respecting FK constraints
+
+            // Step 1: Master data (no dependencies)
             customerRepository.bulkUpsert(customers);
             productRepository.bulkUpsert(products);
 
-            // Dimension tables
+            // Step 2: Fact table (ORDER must be inserted BEFORE dimension tables that reference it)
+            orderRepository.bulkUpsert(orders);
+
+            // Step 3: Dimension tables (have FK to order_id)
             geographyRepository.bulkUpsert(geography);
             paymentRepository.bulkUpsert(payments);
             shippingRepository.bulkUpsert(shipping);
             processingDateRepository.bulkUpsert(dates);
 
-            // Fact tables
-            orderRepository.bulkUpsert(orders);
-
-            // Multi-dependency tables
+            // Step 4: Detail tables (have FK to both order_id and other tables)
             orderItemRepository.bulkUpsert(orderItems);
             orderStatusRepository.bulkUpsert(orderStatuses);
 
@@ -256,13 +258,22 @@ public class BatchProcessor {
 
             log.info("🎵 Upserting TikTok entities via temp tables...");
 
+            // FIXED: Correct insert sequence respecting FK constraints
+
+            // Step 1: Master data (no dependencies)
             customerRepository.bulkUpsert(customers);
             productRepository.bulkUpsert(products);
+
+            // Step 2: Fact table (ORDER must be inserted BEFORE dimension tables that reference it)
+            orderRepository.bulkUpsert(orders);
+
+            // Step 3: Dimension tables (have FK to order_id)
             geographyRepository.bulkUpsert(geography);
             paymentRepository.bulkUpsert(payments);
             shippingRepository.bulkUpsert(shipping);
             processingDateRepository.bulkUpsert(dates);
-            orderRepository.bulkUpsert(orders);
+
+            // Step 4: Detail tables (have FK to both order_id and other tables)
             orderItemRepository.bulkUpsert(orderItems);
             orderStatusRepository.bulkUpsert(orderStatuses);
 
@@ -314,13 +325,22 @@ public class BatchProcessor {
 
             log.info("🛒 Upserting Shopee entities via temp tables...");
 
+            // FIXED: Correct insert sequence respecting FK constraints
+
+            // Step 1: Master data (no dependencies)
             customerRepository.bulkUpsert(customers);
             productRepository.bulkUpsert(products);
+
+            // Step 2: Fact table (ORDER must be inserted BEFORE dimension tables that reference it)
+            orderRepository.bulkUpsert(orders);
+
+            // Step 3: Dimension tables (have FK to order_id)
             geographyRepository.bulkUpsert(geography);
             paymentRepository.bulkUpsert(payments);
             shippingRepository.bulkUpsert(shipping);
             processingDateRepository.bulkUpsert(dates);
-            orderRepository.bulkUpsert(orders);
+
+            // Step 4: Detail tables (have FK to both order_id and other tables)
             orderItemRepository.bulkUpsert(orderItems);
             orderStatusRepository.bulkUpsert(orderStatuses);
 

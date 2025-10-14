@@ -115,7 +115,7 @@ public class TikTokMapper {
                 .actualShippingFee(safeDouble(order.getShippingFee()))
                 .shippingWeightGram(0)
                 .daysToShip(0)
-                .isDelivered(isDelivered(order))
+                .isDelivered(OrderStatusValidator.isDelivered(order, "TIKTOK"))
                 .isCancelled(OrderStatusValidator.isCancelled(order, "TIKTOK"))
                 .isReturned(OrderStatusValidator.isReturned(order, "TIKTOK"))
                 .isCod(order.isCodOrder())

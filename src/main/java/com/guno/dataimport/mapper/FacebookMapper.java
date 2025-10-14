@@ -119,7 +119,7 @@ public class FacebookMapper {
                 .actualShippingFee(safeDouble(order.getShippingFee()))
                 .shippingWeightGram(0)
                 .daysToShip(0)
-                .isDelivered(isDelivered(order))
+                .isDelivered(OrderStatusValidator.isDelivered(order, "FACEBOOK"))
                 .isCancelled(OrderStatusValidator.isCancelled(order, "FACEBOOK"))
                 .isReturned(OrderStatusValidator.isReturned(order, "FACEBOOK"))
                 .isCod(order.isCodOrder())

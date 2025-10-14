@@ -117,7 +117,7 @@ public class ShopeeMapper {
                 .actualShippingFee(safeDouble(order.getShippingFee()))
                 .shippingWeightGram(0)
                 .daysToShip(0)
-                .isDelivered(isDelivered(order))
+                .isDelivered(OrderStatusValidator.isDelivered(order, "SHOPEE"))
                 .isCancelled(OrderStatusValidator.isCancelled(order, "SHOPEE"))
                 .isReturned(OrderStatusValidator.isReturned(order, "SHOPEE"))
                 .isCod(order.isCodOrder())

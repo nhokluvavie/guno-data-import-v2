@@ -5,6 +5,7 @@ import com.guno.dataimport.dto.platform.facebook.FacebookItemDto;
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
 import com.guno.dataimport.entity.*;
 import com.guno.dataimport.util.KeyGenerator;
+import com.guno.dataimport.util.OrderStatusValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -35,7 +36,19 @@ public class ShopeeMapper {
     // ================================
 
     public Customer mapToCustomer(FacebookOrderDto order) {
-        if (order == null || order.getCustomer() == null) return null;
+        if (order == null) return null;
+
+        if (order.getCustomer() == null) {
+            return Customer.builder()
+                    .customerId("GUEST_" + order.getOrderId())
+                    .customerKey(0L)
+                    .platformCustomerId("GUEST")
+                    .customerSegment("GUEST")
+                    .customerTier("GUEST")
+                    .acquisitionChannel("SHOPEE")
+                    .preferredPlatform("SHOPEE")
+                    .build();
+        }
 
         FacebookCustomer fbCustomer = order.getCustomer();
         String customerId = fbCustomer.getCustomerId() != null ? fbCustomer.getCustomerId() : fbCustomer.getId();
@@ -85,8 +98,8 @@ public class ShopeeMapper {
         return Order.builder()
                 .orderId(order.getOrderId())
                 .customerId(extractCustomerId(order))
-                .shopId(null)
-                .internalUuid(null)
+                .shopId(order.getAccountName())
+                .internalUuid("SHOPEE")
                 .orderCount(1)
                 .itemQuantity(calculateTotalQuantity(order))
                 .totalItemsInOrder(order.getItems().size())
@@ -105,8 +118,8 @@ public class ShopeeMapper {
                 .shippingWeightGram(0)
                 .daysToShip(0)
                 .isDelivered(isDelivered(order))
-                .isCancelled(isCancelled(order))
-                .isReturned(isOrderReturned(order))
+                .isCancelled(OrderStatusValidator.isCancelled(order, "SHOPEE"))
+                .isReturned(OrderStatusValidator.isReturned(order, "SHOPEE"))
                 .isCod(order.isCodOrder())
                 .isNewCustomer(false)
                 .isRepeatCustomer(false)
@@ -199,6 +212,7 @@ public class ShopeeMapper {
                     .priceRange(getPriceRange(item.getPriceAsDouble()))
                     .primaryImageUrl(getImageUrl(item))
                     .imageCount(getImageCount(item))
+                    .skuGroup(getSkuGroup(item))
                     .build());
         }
         return products;
@@ -583,7 +597,7 @@ public class ShopeeMapper {
             if (customerId != null) return customerId;
             return order.getCustomer().getId();
         }
-        return "UNKNOWN";
+        return "GUEST_" + order.getOrderId();
     }
 
     private int calculateTotalQuantity(FacebookOrderDto order) {
@@ -665,5 +679,15 @@ public class ShopeeMapper {
 
     private boolean safeBool(Boolean value) {
         return value != null && value;
+    }
+
+    private String getSkuGroup(FacebookItemDto item) {
+        if (item.getVariationInfo() != null) {
+            String productDisplayId = item.getVariationInfo().getProductDisplayId();
+            if (productDisplayId != null && !productDisplayId.trim().isEmpty()) {
+                return productDisplayId.trim();
+            }
+        }
+        return null;
     }
 }

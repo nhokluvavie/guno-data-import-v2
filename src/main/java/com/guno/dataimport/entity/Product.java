@@ -58,4 +58,6 @@ public class Product {
     // SEO fields
     private String seoTitle;
     private String seoKeywords;
+
+    private String skuGroup;
 }

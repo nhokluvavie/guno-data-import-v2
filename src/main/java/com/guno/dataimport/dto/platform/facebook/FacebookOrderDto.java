@@ -116,6 +116,10 @@ public class FacebookOrderDto {
         return data != null ? data.getTrackingHistories() : new ArrayList<>();
     }
 
+    public String getPageId() {
+        return data != null && data.getPage() != null ? data.getPage().getId() : null;
+    }
+
     public boolean isCodOrder() {
         return getCod() != null && getCod() > 0;
     }
@@ -123,6 +127,10 @@ public class FacebookOrderDto {
     public double getTotalAmountAsDouble() {
         Long total = getTotalPriceAfterSubDiscount();
         return total != null ? total.doubleValue() : 0.0;
+    }
+
+    public List<ChangedLog> getHistories() {
+        return data != null ? data.getHistories() : new ArrayList<>();
     }
 
     // ========== NESTED CLASSES ==========
@@ -193,6 +201,13 @@ public class FacebookOrderDto {
         @JsonProperty("tracking_histories")
         @Builder.Default
         private List<TrackingHistory> trackingHistories = new ArrayList<>();
+
+        @JsonProperty("page")
+        private Page page;
+
+        @JsonProperty("histories")
+        @Builder.Default
+        private List<ChangedLog> histories = new ArrayList<>();
     }
 
     @Data
@@ -238,5 +253,18 @@ public class FacebookOrderDto {
 
         @JsonProperty("tracking_id")
         private String trackingId;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Page {
+        @JsonProperty("id")
+        private String id;
+
+        @JsonProperty("name")
+        private String name;
+
+        @JsonProperty("username")
+        private String username;
     }
 }

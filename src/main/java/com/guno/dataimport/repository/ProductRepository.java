@@ -30,33 +30,34 @@ public class ProductRepository {
     private final JdbcTemplate jdbcTemplate;
 
     private static final String UPSERT_SQL = """
-        INSERT INTO tbl_product (
-            sku, platform_product_id, product_id, variation_id, barcode, product_name,
-            product_description, brand, model, category_level_1, category_level_2,
-            category_level_3, category_path, color, "size", material, weight_gram,
-            dimensions, cost_price, retail_price, original_price, price_range,
-            is_active, is_featured, is_seasonal, is_new_arrival, is_best_seller,
-            primary_image_url, image_count, seo_title, seo_keywords
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (sku, platform_product_id) DO UPDATE SET
-            product_name = EXCLUDED.product_name,
-            retail_price = EXCLUDED.retail_price,
-            original_price = EXCLUDED.original_price,
-            is_active = EXCLUDED.is_active,
-            primary_image_url = EXCLUDED.primary_image_url,
-            image_count = EXCLUDED.image_count
-        """;
+    INSERT INTO tbl_product (
+        sku, platform_product_id, product_id, variation_id, barcode, product_name,
+        product_description, brand, model, category_level_1, category_level_2,
+        category_level_3, category_path, color, "size", material, weight_gram,
+        dimensions, cost_price, retail_price, original_price, price_range,
+        is_active, is_featured, is_seasonal, is_new_arrival, is_best_seller,
+        primary_image_url, image_count, seo_title, seo_keywords, sku_group
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (sku, platform_product_id) DO UPDATE SET
+        product_name = EXCLUDED.product_name,
+        retail_price = EXCLUDED.retail_price,
+        original_price = EXCLUDED.original_price,
+        is_active = EXCLUDED.is_active,
+        primary_image_url = EXCLUDED.primary_image_url,
+        image_count = EXCLUDED.image_count,
+        sku_group = EXCLUDED.sku_group
+    """;
 
     private static final String COPY_SQL = """
-        COPY tbl_product (
-            sku, platform_product_id, product_id, variation_id, barcode, product_name,
-            product_description, brand, model, category_level_1, category_level_2,
-            category_level_3, category_path, color, "size", material, weight_gram,
-            dimensions, cost_price, retail_price, original_price, price_range,
-            is_active, is_featured, is_seasonal, is_new_arrival, is_best_seller,
-            primary_image_url, image_count, seo_title, seo_keywords
-        ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
-        """;
+    COPY tbl_product (
+        sku, platform_product_id, product_id, variation_id, barcode, product_name,
+        product_description, brand, model, category_level_1, category_level_2,
+        category_level_3, category_path, color, "size", material, weight_gram,
+        dimensions, cost_price, retail_price, original_price, price_range,
+        is_active, is_featured, is_seasonal, is_new_arrival, is_best_seller,
+        primary_image_url, image_count, seo_title, seo_keywords, sku_group
+    ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
+    """;
 
     /**
      * OPTIMIZED: Bulk upsert with COPY FROM fallback
@@ -206,7 +207,8 @@ public class ProductRepository {
                         CsvFormatter.formatBoolean(product.getIsActive()), CsvFormatter.formatBoolean(product.getIsFeatured()),
                         CsvFormatter.formatBoolean(product.getIsSeasonal()), CsvFormatter.formatBoolean(product.getIsNewArrival()),
                         CsvFormatter.formatBoolean(product.getIsBestSeller()), product.getPrimaryImageUrl(),
-                        product.getImageCount(), product.getSeoTitle(), product.getSeoKeywords()
+                        product.getImageCount(), product.getSeoTitle(), product.getSeoKeywords(),
+                        product.getSkuGroup()
                 ))
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
@@ -225,7 +227,7 @@ public class ProductRepository {
                 p.getColor(), p.getSize(), p.getMaterial(), p.getWeightGram(), p.getDimensions(),
                 p.getCostPrice(), p.getRetailPrice(), p.getOriginalPrice(), p.getPriceRange(),
                 p.getIsActive(), p.getIsFeatured(), p.getIsSeasonal(), p.getIsNewArrival(),
-                p.getIsBestSeller(), p.getPrimaryImageUrl(), p.getImageCount(), p.getSeoTitle(), p.getSeoKeywords()
+                p.getIsBestSeller(), p.getPrimaryImageUrl(), p.getImageCount(), p.getSeoTitle(), p.getSeoKeywords(), p.getSkuGroup()
         };
     }
 
@@ -262,6 +264,7 @@ public class ProductRepository {
                 .imageCount(rs.getInt("image_count"))
                 .seoTitle(rs.getString("seo_title"))
                 .seoKeywords(rs.getString("seo_keywords"))
+                .skuGroup(rs.getString("sku_group"))
                 .build();
     }
 }

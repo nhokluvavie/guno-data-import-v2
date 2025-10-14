@@ -16,6 +16,7 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import com.guno.dataimport.util.OrderStatusValidator;
 
 /**
  * FacebookMapper - Maps Facebook API DTOs to internal entities
@@ -37,7 +38,19 @@ public class FacebookMapper {
     // ================================
 
     public Customer mapToCustomer(FacebookOrderDto order) {
-        if (order == null || order.getCustomer() == null) return null;
+        if (order == null) return null;
+
+        if (order.getCustomer() == null) {
+            return Customer.builder()
+                    .customerId("GUEST_" + order.getOrderId())
+                    .customerKey(0L)
+                    .platformCustomerId("GUEST")
+                    .customerSegment("GUEST")
+                    .customerTier("GUEST")
+                    .acquisitionChannel("FACEBOOK")
+                    .preferredPlatform("FACEBOOK")
+                    .build();
+        }
 
         FacebookCustomer fbCustomer = order.getCustomer();
         String customerId = fbCustomer.getCustomerId() != null ? fbCustomer.getCustomerId() : fbCustomer.getId();
@@ -87,8 +100,8 @@ public class FacebookMapper {
         return Order.builder()
                 .orderId(order.getOrderId())
                 .customerId(extractCustomerId(order))
-                .shopId(null)
-                .internalUuid(null)
+                .shopId(order.getPageId())
+                .internalUuid("FACEBOOK")
                 .orderCount(1)
                 .itemQuantity(calculateTotalQuantity(order))
                 .totalItemsInOrder(order.getItems().size())
@@ -107,8 +120,8 @@ public class FacebookMapper {
                 .shippingWeightGram(0)
                 .daysToShip(0)
                 .isDelivered(isDelivered(order))
-                .isCancelled(isCancelled(order))
-                .isReturned(isOrderReturned(order))
+                .isCancelled(OrderStatusValidator.isCancelled(order, "FACEBOOK"))
+                .isReturned(OrderStatusValidator.isReturned(order, "FACEBOOK"))
                 .isCod(order.isCodOrder())
                 .isNewCustomer(false)
                 .isRepeatCustomer(false)
@@ -201,6 +214,7 @@ public class FacebookMapper {
                     .priceRange(getPriceRange(item.getPriceAsDouble()))
                     .primaryImageUrl(getImageUrl(item))
                     .imageCount(getImageCount(item))
+                    .skuGroup(getSkuGroup(item))
                     .build());
         }
         return products;
@@ -667,5 +681,15 @@ public class FacebookMapper {
 
     private boolean safeBool(Boolean value) {
         return value != null && value;
+    }
+
+    private String getSkuGroup(FacebookItemDto item) {
+        if (item.getVariationInfo() != null) {
+            String productDisplayId = item.getVariationInfo().getProductDisplayId();
+            if (productDisplayId != null && !productDisplayId.trim().isEmpty()) {
+                return productDisplayId.trim();
+            }
+        }
+        return null;
     }
 }

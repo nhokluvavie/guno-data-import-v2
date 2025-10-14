@@ -267,56 +267,68 @@ public class OrderStatusValidator {
     /**
      * TikTok: Xác định đơn đã giao thành công
      *
-     * NGUYÊN TẮC:
-     * 1. LOẠI TRỪ các trường hợp KHÔNG phải delivered
-     * 2. Kiểm tra các dấu hiệu KHẲNG ĐỊNH delivered
+     * NGUYÊN TẮC (UPDATED):
+     * 1. Kiểm tra LỊCH SỬ trước để phân biệt Hoàn hủy vs Trả hàng
+     * 2. LOẠI TRỪ các trường hợp KHÔNG phải delivered
+     * 3. Kiểm tra các dấu hiệu KHẲNG ĐỊNH delivered
      *
-     * KHÔNG delivered nếu:
-     * - status_name = "returning"
-     * - return_quantity > 0 hoặc returning_quantity > 0
-     * - histories có SHIPPED/IN_TRANSIT → CANCEL/CANCELLED
-     * - extend_update có "returned" / "rejected"
-     * - partner_status = "returning" / "returned"
+     * PHÂN BIỆT 2 CASE:
+     * - HOÀN HỦY: Có return_quantity NHƯNG chưa từng delivered → is_delivered=FALSE
+     * - TRẢ HÀNG: Có return_quantity VÀ đã từng delivered → is_delivered=TRUE
      */
     private static boolean isTikTokDelivered(FacebookOrderDto order) {
+        // ===== BƯỚC 0: KIỂM TRA LỊCH SỬ (QUAN TRỌNG!) =====
+
+        // Nếu đã TỪNG được giao (status=4 trong histories)
+        // → Vẫn tính là delivered, dù có return_quantity (trả hàng SAU giao)
+        boolean everDelivered = hasEverBeenDelivered(order);
+
         // ===== BƯỚC 1: ĐIỀU KIỆN LOẠI TRỪ =====
 
-        // Loại trừ 1: status_name = "returning"
+        // Loại trừ 1: status_name = "returning" NHƯNG chưa từng delivered
         String statusName = order.getStatusName();
-        if ("returning".equalsIgnoreCase(statusName)) {
+        if ("returning".equalsIgnoreCase(statusName) && !everDelivered) {
             return false;
         }
 
-        // Loại trừ 2: Có return_quantity hoặc returning_quantity
-        if (hasReturnQuantityInItems(order)) {
+        // Loại trừ 2: Có return_quantity NHƯNG chưa từng delivered (hoàn hủy)
+        if (hasReturnQuantityInItems(order) && !everDelivered) {
             return false;
         }
 
-        // Loại trừ 3: partner_status = "returning" hoặc "returned"
-        if (hasPartnerStatus(order, "returning") || hasPartnerStatus(order, "returned")) {
+        // Loại trừ 3: partner_status = "returning"/"returned" NHƯNG chưa từng delivered
+        if ((hasPartnerStatus(order, "returning") || hasPartnerStatus(order, "returned"))
+                && !everDelivered) {
             return false;
         }
 
-        // Loại trừ 4: histories có SHIPPED/IN_TRANSIT → CANCEL/CANCELLED
+        // Loại trừ 4: histories có SHIPPED/IN_TRANSIT → CANCEL (hoàn hủy giữa đường)
         if (hasCancelAfterShippedInHistories(order)) {
             return false;
         }
 
-        // Loại trừ 5: extend_update có dấu hiệu return
-        if (hasExtendUpdateContains(order, "returned to the seller") ||
+        // Loại trừ 5: extend_update có dấu hiệu return NHƯNG chưa từng delivered
+        if ((hasExtendUpdateContains(order, "returned to the seller") ||
                 hasExtendUpdateContains(order, "being returned") ||
-                hasExtendUpdateContains(order, "return package")) {
+                hasExtendUpdateContains(order, "return package"))
+                && !everDelivered) {
             return false;
         }
 
-        // Loại trừ 6: extend_update có dấu hiệu rejected
-        if (hasExtendUpdateContains(order, "customer has rejected") ||
+        // Loại trừ 6: extend_update có dấu hiệu rejected NHƯNG chưa từng delivered
+        if ((hasExtendUpdateContains(order, "customer has rejected") ||
                 hasExtendUpdateContains(order, "package has been rejected") ||
-                hasExtendUpdateContains(order, "has rejected the package")) {
+                hasExtendUpdateContains(order, "has rejected the package"))
+                && !everDelivered) {
             return false;
         }
 
         // ===== BƯỚC 2: ĐIỀU KIỆN KHẲNG ĐỊNH =====
+
+        // Khẳng định 0: Đã từng delivered trong lịch sử (ưu tiên cao nhất)
+        if (everDelivered) {
+            return true;
+        }
 
         // Khẳng định 1: partner_status = "delivered"
         if (hasPartnerStatus(order, "delivered")) {
@@ -624,5 +636,23 @@ public class OrderStatusValidator {
         return order.getHistories().stream()
                 .anyMatch(log -> log.getNote() != null &&
                         log.getNote().asText().toLowerCase().contains("nhận hàng hoàn"));
+    }
+
+    /**
+     * Kiểm tra đơn hàng đã TỪNG được giao thành công chưa (dựa vào lịch sử)
+     * Dùng để phân biệt: Hoàn hủy vs Trả hàng
+     *
+     * @return true nếu đã từng có status=4 (DELIVERED) trong histories
+     */
+    private static boolean hasEverBeenDelivered(FacebookOrderDto order) {
+        if (order.getHistories() == null || order.getHistories().isEmpty()) {
+            return false;
+        }
+
+        // Check trong histories có status chuyển sang 4 (DELIVERED) không
+        return order.getHistories().stream()
+                .anyMatch(log -> log.getStatus() != null &&
+                        log.getStatus().getNewValue() != null &&
+                        (log.getStatus().getNewValue() == 3 || log.getStatus().getNewValue() == 4));
     }
 }

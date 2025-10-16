@@ -3,9 +3,11 @@
 # Production startup script for Guno Data Import - Facebook Platform
 echo "🚀 Starting Guno Data Import - Facebook Platform (Production)"
 
-# Load environment variables
+# Load environment variables - FIXED
 if [ -f .env.production ]; then
-    export $(cat .env.production | grep -v '^#' | xargs)
+    set -a
+    source .env.production
+    set +a
     echo "✅ Environment variables loaded"
 else
     echo "⚠️ .env.production not found, using default values"
@@ -43,7 +45,7 @@ health_check() {
     echo "🔍 Waiting for application to start..."
 
     while [ $attempt -le $max_attempts ]; do
-        if curl -s http://localhost:${SERVER_PORT:-8080}/actuator/health > /dev/null 2>&1; then
+        if curl -s http://localhost:${SERVER_PORT:-8088}/actuator/health > /dev/null 2>&1; then
             echo "✅ Application is healthy!"
             return 0
         fi
@@ -70,46 +72,11 @@ echo $APP_PID > logs/app.pid
 sleep 10
 if health_check; then
     echo "🎉 Production deployment successful!"
-    echo "📊 Health endpoint: http://localhost:${SERVER_PORT:-8080}/actuator/health"
-    echo "📈 Metrics endpoint: http://localhost:${SERVER_PORT:-8080}/actuator/metrics"
+    echo "📊 Health endpoint: http://localhost:${SERVER_PORT:-8088}/actuator/health"
+    echo "📈 Metrics endpoint: http://localhost:${SERVER_PORT:-8088}/actuator/metrics"
     echo "📋 Logs: tail -f logs/guno-data-import.log"
     echo "🔄 Scheduler will run every 2 hours automatically"
 else
     echo "❌ Production deployment failed - check logs"
     exit 1
 fi
-
----
-
-# ===============================================
-# File: stop-production.sh (stop script)
-# ===============================================
-#!/bin/bash
-
-echo "🛑 Stopping Guno Data Import - Facebook Platform"
-
-if [ -f logs/app.pid ]; then
-    PID=$(cat logs/app.pid)
-    if ps -p $PID > /dev/null 2>&1; then
-        echo "🔄 Stopping application (PID: $PID)..."
-        kill $PID
-
-        # Wait for graceful shutdown
-        sleep 10
-
-        if ps -p $PID > /dev/null 2>&1; then
-            echo "⚠️ Force killing application..."
-            kill -9 $PID
-        fi
-
-        rm logs/app.pid
-        echo "✅ Application stopped"
-    else
-        echo "⚠️ Application not running"
-        rm logs/app.pid
-    fi
-else
-    echo "⚠️ PID file not found"
-fi
-
-echo "📅 $(date): Stopped Guno Data Import Facebook Platform" >> logs/startup.log

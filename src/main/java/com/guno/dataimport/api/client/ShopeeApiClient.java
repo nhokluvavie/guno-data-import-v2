@@ -50,7 +50,7 @@ public class ShopeeApiClient {
     @Value("${api.shopee.source:shopee}")
     private String defaultSource;
 
-    @Value("${api.shopee.filter-date:insert}")
+    @Value("${api.shopee.filter-date:update}")
     private String filterDate;
 
     /**

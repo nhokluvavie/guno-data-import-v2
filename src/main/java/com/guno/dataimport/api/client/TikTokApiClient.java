@@ -50,7 +50,7 @@ public class TikTokApiClient {
     @Value("${api.tiktok.source:tiktok}")
     private String defaultSource;
 
-    @Value("${api.facebook.filter-date:insert}")
+    @Value("${api.facebook.filter-date:update}")
     private String filterDate;
 
     /**

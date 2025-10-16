@@ -48,7 +48,7 @@ public class FacebookApiClient {
     @Value("${api.facebook.source:facebook}")
     private String defaultSource;
 
-    @Value("${api.facebook.filter-date:insert}")
+    @Value("${api.facebook.filter-date:update}")
     private String filterDate;
 
     /**

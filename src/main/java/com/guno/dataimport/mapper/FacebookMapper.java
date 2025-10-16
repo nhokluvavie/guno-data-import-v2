@@ -363,7 +363,7 @@ public class FacebookMapper {
                     .subStatusId(subStatusId)
                     .partnerStatusId(partnerStatusId)
                     .transitionDateKey(getCurrentDateKey())
-                    .transitionTimestamp(order.getCreatedAt())
+                    .transitionTimestamp(order.getInsertedAt())
                     .durationInPreviousStatusHours(0)
                     .transitionReason("ORDER_CREATED")
                     .transitionTrigger("SYSTEM")
@@ -371,7 +371,7 @@ public class FacebookMapper {
                     .isOnTimeTransition(true)
                     .isExpectedTransition(true)
                     .historyKey(generateKey("HIST_" + order.getOrderId()))
-                    .createdAt(String.valueOf(order.getCreatedAt()))
+                    .createdAt(String.valueOf(order.getInsertedAt()))
                     .build();
             orderStatuses.add(orderStatus);
         }

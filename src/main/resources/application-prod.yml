@@ -3,13 +3,13 @@ spring:
     name: guno-data-import
 
   profiles:
-    active: ${SPRING_PROFILES_ACTIVE:dev}
+    active: ${SPRING_PROFILES_ACTIVE:prod}
 
-  # Database Configuration
+  # Database Configuration - FIXED: Use production DB
   datasource:
-    url: jdbc:postgresql://103.97.125.92:5432/guno_db_test?useSSL=false
-    username: guno_user
-    password: UYUgjL80moKrc6WTDLbg
+    url: jdbc:postgresql://${DB_HOST:103.97.125.92}:${DB_PORT:5432}/${DB_NAME:guno_db}?useSSL=false
+    username: ${DB_USERNAME:guno_user}
+    password: ${DB_PASSWORD:UYUgjL80moKrc6WTDLbg}
     driver-class-name: org.postgresql.Driver
 
     hikari:
@@ -37,45 +37,50 @@ management:
     health:
       show-details: when-authorized
 
-# API Configuration - Local APIs
+# API Configuration
 api:
   shopee:
-    base-url: ${SHOPEE_API_URL:http://localhost:8080/api/shopee}
-    headers:
-      Authorization: ${SHOPEE_AUTH_TOKEN:}
-      Content-Type: application/json
-      X-API-Key: ${SHOPEE_API_KEY:}
-    timeout-seconds: 300
-    page-size: 1500
-    max-retries: 3
-    retry-delay-ms: 1000
-
-  tiktok:
-    base-url: ${TIKTOK_API_URL:http://localhost:8080/api/tiktok}
-    headers:
-      Authorization: ${TIKTOK_AUTH_TOKEN:}
-      Content-Type: application/json
-      X-API-Key: ${TIKTOK_API_KEY:}
-    timeout-seconds: 300
-    page-size: 1500
-    max-retries: 3
-    retry-delay-ms: 1000
-
-  facebook:
-    base-url: https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search
+    base-url: ${SHOPEE_API_URL:https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search}
     headers:
       Authorization: x-webhook-api-key
       Content-Type: application/json
-      X-API-Key: iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr
+      X-API-Key: ${SHOPEE_API_KEY:iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr}
+    timeout-seconds: 600
+    page-size: 1500
+    max-retries: 5
+    retry-delay-ms: 2000
+    default-date: ""
+    source: "shopee"
+    filter-date: "update"
+
+  tiktok:
+    base-url: ${TIKTOK_API_URL:https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search}
+    headers:
+      Authorization: x-webhook-api-key
+      Content-Type: application/json
+      X-API-Key: ${TIKTOK_API_KEY:iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr}
+    timeout-seconds: 600
+    page-size: 1500
+    max-retries: 5
+    retry-delay-ms: 2000
+    default-date: ""
+    source: "tiktok"
+    filter-date: "update"
+
+  facebook:
+    base-url: ${FACEBOOK_API_URL:https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search}
+    headers:
+      Authorization: x-webhook-api-key
+      Content-Type: application/json
+      X-API-Key: ${FACEBOOK_API_KEY:iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr}
     timeout-seconds: 600
     page-size: 1000
     max-retries: 5
     retry-delay-ms: 2000
-    default-date: ""            # Empty = use today's date
+    default-date: ""
     source: "facebook"
-    filter-date: "insert"
+    filter-date: "update"
 
-  # Common API settings
   common:
     connect-timeout-ms: 10000
     read-timeout-ms: 30000
@@ -101,33 +106,23 @@ processing:
     fallback-method: MULTI_VALUE
     copy-batch-size: 10000
 
-# Scheduler Configuration
+# Scheduler Configuration - FIXED: Every 2 hours (production)
 scheduler:
   import:
-    enabled: true
-    cron: "0 */5 * * * *"
+    enabled: ${SCHEDULER_ENABLED:true}
+    cron: ${SCHEDULER_CRON:0 */5 * * * *}
     use-parallel: true
     auto-start: false
 
-# Development vs Production settings
-dev:
-  api:
-    timeout-seconds: 60
-    page-size: 100
-    max-retries: 1
-  processing:
-    batch-size: 100
-    thread-pool-size: 2
-  logging:
-    level: DEBUG
-
-prod:
-  api:
-    timeout-seconds: 300
-    page-size: 1500
-    max-retries: 3
-  processing:
-    batch-size: 1000
-    thread-pool-size: 5
-  logging:
-    level: INFO
+# Logging Configuration
+logging:
+  level:
+    root: INFO
+    com.guno.dataimport: INFO
+    com.guno.dataimport.scheduler: INFO
+    com.guno.dataimport.api.client: INFO
+    com.guno.dataimport.processor: INFO
+    org.springframework.jdbc: WARN
+    org.springframework.web: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

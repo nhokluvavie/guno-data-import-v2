@@ -1,5 +1,6 @@
 package com.guno.dataimport.mapper;
 
+import com.guno.dataimport.dto.platform.facebook.AdvancedPlatformFee;
 import com.guno.dataimport.dto.platform.facebook.FacebookCustomer;
 import com.guno.dataimport.dto.platform.facebook.FacebookItemDto;
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
@@ -15,6 +16,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import com.guno.dataimport.util.OrderStatusValidator;
 
@@ -111,7 +113,7 @@ public class FacebookMapper {
                 .taxAmount(safeDouble(order.getTax()))
                 .discountAmount(safeDouble(order.getDiscount()))
                 .codAmount(safeDouble(order.getCod()))
-                .platformFee(0.0)
+                .platformFee(calculatePlatformFee(order))
                 .sellerDiscount(0.0)
                 .platformDiscount(safeDouble(order.getDiscount()))
                 .originalPrice(safeDouble(order.getTotalPriceAfterSubDiscount()))
@@ -384,7 +386,7 @@ public class FacebookMapper {
     public ProcessingDateInfo mapToProcessingDateInfo(FacebookOrderDto order) {
         if (order == null) return null;
 
-        LocalDateTime orderDate = order.getCreatedAt();
+        LocalDateTime orderDate = order.getInsertedAt();
         if (orderDate == null) {
             orderDate = LocalDateTime.now();
         }
@@ -691,5 +693,22 @@ public class FacebookMapper {
             }
         }
         return null;
+    }
+
+    private double calculatePlatformFee(FacebookOrderDto order) {
+        if (order.getData() == null ||
+                order.getData().getAdvancedPlatformFee() == null) {
+            return 0.0;
+        }
+
+        AdvancedPlatformFee fees = order.getData().getAdvancedPlatformFee();
+        double total = 0.0;
+
+        total += safeDouble(fees.getTax());
+        total += safeDouble(fees.getPaymentFee());
+        total += safeDouble(fees.getServiceFee());
+        total += safeDouble(fees.getSellerTransactionFee());
+
+        return total;
     }
 }

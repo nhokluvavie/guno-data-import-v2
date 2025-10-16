@@ -12,7 +12,13 @@ import java.util.List;
 
 /**
  * Xác định is_delivered, is_cancelled và is_returned theo platform
- * Version 5.0 - TikTok Logic: Dựa trên Ý NGHĨA của các trường, không chỉ value
+ * Version 6.0 - Updated với Pancake POS Status mapping mới
+ *
+ * STATUS MAPPING MỚI:
+ * - Status 3 = Delivered (đã giao)
+ * - Status 4 = Returning (đang hoàn)
+ * - Status 5 = Returned (đã hoàn về)
+ * - Status 6 = Canceled (đã hủy)
  *
  * PHÂN LOẠI 3 LOẠI ĐƠN:
  * 1. ĐƠN HỦY:       is_cancelled = TRUE,  is_returned = FALSE, is_delivered = FALSE
@@ -20,8 +26,8 @@ import java.util.List;
  * 3. ĐƠN TRẢ HÀNG:  is_cancelled = FALSE, is_returned = TRUE,  is_delivered = TRUE  (đã giao, khách trả lại)
  *
  * NGUYÊN TẮC:
- * - Không dựa vào 1 field đơn lẻ để kết luận
- * - Kết hợp nhiều field để xác định ý nghĩa thực sự
+ * - TikTok/Shopee: Check lịch sử để phân biệt Hoàn hủy vs Trả hàng
+ * - Facebook: Logic đơn giản (không có lịch sử status)
  * - Ưu tiên các dấu hiệu trực tiếp (return_quantity, status_name, return_fee)
  */
 @Slf4j
@@ -68,11 +74,15 @@ public class OrderStatusValidator {
         };
     }
 
-    // ========== FACEBOOK LOGIC ==========
+    // ========== FACEBOOK LOGIC (ORIGINAL - Simple) ==========
 
+    /**
+     * Facebook: Xác định đơn đã giao thành công
+     * Logic đơn giản, không dựa vào lịch sử histories
+     */
     private static boolean isFacebookDelivered(FacebookOrderDto order) {
-        // Priority 1: status = 4 (DELIVERED)
-        if (order.getStatus() != null && order.getStatus() == 4) {
+        // Priority 1: status = 3 (DELIVERED)
+        if (order.getStatus() != null && order.getStatus() == 3) {
             return true;
         }
 
@@ -101,79 +111,114 @@ public class OrderStatusValidator {
         return false;
     }
 
+    /**
+     * Facebook: Xác định đơn đã bị hủy
+     */
     private static boolean isFacebookCancelled(FacebookOrderDto order) {
         // Nếu là đơn hoàn → không phải cancelled
         if (isFacebookReturned(order)) return false;
 
-        // Check 1: status = -1
-        if (order.getStatus() != null && order.getStatus() == -1) return true;
+        // Check 1: status = 6 (CANCELED)
+        if (order.getStatus() != null && order.getStatus() == 6) return true;
 
         // Check 2: partner_status = "cancelled"
         if (hasPartnerStatus(order, "cancelled")) return true;
 
-        // Check 3: histories có shopee_status = CANCELLED
-        return hasShopeeStatusInHistories(order, "CANCELLED");
+        return false;
     }
 
+    /**
+     * Facebook: Xác định đơn hoàn/trả hàng
+     */
     private static boolean isFacebookReturned(FacebookOrderDto order) {
-        // CRITICAL: Nếu đã delivered → KHÔNG PHẢI hoàn hủy (là trả hàng)
-        // Logic này được giữ nguyên để phân biệt hoàn hủy vs trả hàng
+        // Priority 1: status = 4 (RETURNING) hoặc 5 (RETURNED)
+        if (order.getStatus() != null &&
+                (order.getStatus() == 4 || order.getStatus() == 5)) {
+            return true;
+        }
 
-        // Priority 1: status_name = "returning"
+        // Priority 2: status_name = "returning"
         String statusName = order.getStatusName();
         if ("returning".equalsIgnoreCase(statusName)) {
             return true;
         }
 
-        // Priority 2: return_quantity > 0 hoặc returning_quantity > 0
+        // Priority 3: return_quantity > 0 hoặc returning_quantity > 0
         if (hasReturnQuantityInItems(order)) {
             return true;
         }
 
-        // Priority 3: partner.is_returned = true
+        // Priority 4: partner.is_returned = true
         if (hasPartnerIsReturned(order)) {
             return true;
         }
 
-        // Priority 4: histories có IN_TRANSIT/SHIPPED → CANCEL/CANCELLED
+        // Priority 5: histories có IN_TRANSIT/SHIPPED → CANCEL/CANCELLED
         if (hasCancelAfterShippedInHistories(order)) {
             return true;
         }
 
-        // Priority 5: status = 5 (REFUNDED) + dấu hiệu khác
-        boolean isRefunded = order.getStatus() != null && order.getStatus() == 5;
-        if (isRefunded) {
-            boolean hasNegativeCod = hasNegativeCodInHistories(order);
-            boolean hasReturnTracking = hasTrackingContains(order, "returned to seller") ||
-                    hasTrackingContains(order, "return package") ||
-                    hasTrackingContains(order, "being returned");
-            boolean hasReturnedPartner = hasPartnerStatus(order, "returned");
+        // Priority 6: partner_status = "returned" / "returning"
+        if (hasPartnerStatus(order, "returned") || hasPartnerStatus(order, "returning")) {
+            return true;
+        }
 
-            return hasNegativeCod || hasReturnTracking || hasReturnedPartner;
+        // Priority 7: tracking có dấu hiệu return
+        if (hasTrackingContains(order, "returned to seller") ||
+                hasTrackingContains(order, "return package") ||
+                hasTrackingContains(order, "being returned")) {
+            return true;
         }
 
         return false;
     }
 
-    // ========== SHOPEE LOGIC ==========
+    // ========== SHOPEE LOGIC (Pattern TikTok) ==========
 
+    /**
+     * Shopee: Xác định đơn đã giao thành công
+     * Áp dụng pattern TikTok: Check lịch sử trước
+     */
     private static boolean isShopeeDelivered(FacebookOrderDto order) {
-        // Priority 1: status = 4 (DELIVERED)
-        if (order.getStatus() != null && order.getStatus() == 4) {
+        // BƯỚC 0: Kiểm tra lịch sử
+        boolean everDelivered = hasEverBeenDelivered(order);
+
+        // BƯỚC 1: LOẠI TRỪ
+        String statusName = order.getStatusName();
+        if ("returning".equalsIgnoreCase(statusName) && !everDelivered) {
+            return false;
+        }
+
+        if (hasReturnQuantityInItems(order) && !everDelivered) {
+            return false;
+        }
+
+        if ((hasPartnerStatus(order, "returning") || hasPartnerStatus(order, "returned"))
+                && !everDelivered) {
+            return false;
+        }
+
+        if (hasCancelAfterShippedInHistories(order)) {
+            return false;
+        }
+
+        // BƯỚC 2: KHẲNG ĐỊNH
+        if (everDelivered) {
             return true;
         }
 
-        // Priority 2: partner_status = "delivered"
+        if (order.getStatus() != null && order.getStatus() == 3) {
+            return true;
+        }
+
         if (hasPartnerStatus(order, "delivered")) {
             return true;
         }
 
-        // Priority 3: histories có shopee_status = COMPLETED
         if (hasShopeeStatusInHistories(order, "COMPLETED")) {
             return true;
         }
 
-        // Priority 4: tracking chứa từ khóa delivered
         if (hasTrackingContains(order, "delivered") ||
                 hasTrackingContains(order, "giao hàng thành công")) {
             return true;
@@ -185,6 +230,11 @@ public class OrderStatusValidator {
     private static boolean isShopeeCancelled(FacebookOrderDto order) {
         // Nếu là đơn hoàn → không phải cancelled
         if (isShopeeReturned(order)) return false;
+
+        // Check status = 6 (CANCELED)
+        if (order.getStatus() != null && order.getStatus() == 6) {
+            return true;
+        }
 
         if (order.getHistories() == null) return false;
 
@@ -202,12 +252,18 @@ public class OrderStatusValidator {
     }
 
     private static boolean isShopeeReturned(FacebookOrderDto order) {
-        // Priority 1: partner.is_returned = true
+        // Priority 1: status = 4 (RETURNING) hoặc 5 (RETURNED)
+        if (order.getStatus() != null &&
+                (order.getStatus() == 4 || order.getStatus() == 5)) {
+            return true;
+        }
+
+        // Priority 2: partner.is_returned = true
         if (hasPartnerIsReturned(order)) {
             return true;
         }
 
-        // Priority 2: return_quantity > 0 hoặc returning_quantity > 0
+        // Priority 3: return_quantity > 0 hoặc returning_quantity > 0
         if (hasReturnQuantityInItems(order)) {
             return true;
         }
@@ -241,73 +297,52 @@ public class OrderStatusValidator {
             return true;
         }
 
-        // Priority 3: partner_status = "returned"
+        // Priority 4: partner_status = "returned"
         boolean hasReturnedStatus = hasPartnerStatus(order, "returned");
 
-        // Priority 4: sub_status = 3
+        // Priority 5: sub_status = 3
         boolean hasReturnedSubStatus = order.getSubStatus() != null && order.getSubStatus() == 3;
-
-        // Priority 5: status = 4 hoặc 5
-        boolean isDeliveredOrRefunded = order.getStatus() != null &&
-                (order.getStatus() == 4 || order.getStatus() == 5);
 
         // Priority 6: note có "nhận hàng hoàn"
         boolean hasReturnNote = hasReturnNoteInHistories(order);
 
         // Combinations
         if (hasReturnedStatus && hasReturnedSubStatus) return true;
-        if (hasReturnedStatus && isDeliveredOrRefunded) return true;
+        if (hasReturnedStatus && hasReturnNote) return true;
         if (hasReturnedSubStatus && hasReturnNote) return true;
 
         return false;
     }
 
-    // ========== TIKTOK LOGIC (REWRITTEN - V5.0) ==========
+    // ========== TIKTOK LOGIC (Pattern chuẩn) ==========
 
     /**
      * TikTok: Xác định đơn đã giao thành công
-     *
-     * NGUYÊN TẮC (UPDATED):
-     * 1. Kiểm tra LỊCH SỬ trước để phân biệt Hoàn hủy vs Trả hàng
-     * 2. LOẠI TRỪ các trường hợp KHÔNG phải delivered
-     * 3. Kiểm tra các dấu hiệu KHẲNG ĐỊNH delivered
-     *
-     * PHÂN BIỆT 2 CASE:
-     * - HOÀN HỦY: Có return_quantity NHƯNG chưa từng delivered → is_delivered=FALSE
-     * - TRẢ HÀNG: Có return_quantity VÀ đã từng delivered → is_delivered=TRUE
+     * Pattern chuẩn: Check lịch sử trước để phân biệt Hoàn hủy vs Trả hàng
      */
     private static boolean isTikTokDelivered(FacebookOrderDto order) {
-        // ===== BƯỚC 0: KIỂM TRA LỊCH SỬ (QUAN TRỌNG!) =====
-
-        // Nếu đã TỪNG được giao (status=4 trong histories)
-        // → Vẫn tính là delivered, dù có return_quantity (trả hàng SAU giao)
+        // BƯỚC 0: Kiểm tra lịch sử
         boolean everDelivered = hasEverBeenDelivered(order);
 
-        // ===== BƯỚC 1: ĐIỀU KIỆN LOẠI TRỪ =====
-
-        // Loại trừ 1: status_name = "returning" NHƯNG chưa từng delivered
+        // BƯỚC 1: LOẠI TRỪ
         String statusName = order.getStatusName();
         if ("returning".equalsIgnoreCase(statusName) && !everDelivered) {
             return false;
         }
 
-        // Loại trừ 2: Có return_quantity NHƯNG chưa từng delivered (hoàn hủy)
         if (hasReturnQuantityInItems(order) && !everDelivered) {
             return false;
         }
 
-        // Loại trừ 3: partner_status = "returning"/"returned" NHƯNG chưa từng delivered
         if ((hasPartnerStatus(order, "returning") || hasPartnerStatus(order, "returned"))
                 && !everDelivered) {
             return false;
         }
 
-        // Loại trừ 4: histories có SHIPPED/IN_TRANSIT → CANCEL (hoàn hủy giữa đường)
         if (hasCancelAfterShippedInHistories(order)) {
             return false;
         }
 
-        // Loại trừ 5: extend_update có dấu hiệu return NHƯNG chưa từng delivered
         if ((hasExtendUpdateContains(order, "returned to the seller") ||
                 hasExtendUpdateContains(order, "being returned") ||
                 hasExtendUpdateContains(order, "return package"))
@@ -315,7 +350,6 @@ public class OrderStatusValidator {
             return false;
         }
 
-        // Loại trừ 6: extend_update có dấu hiệu rejected NHƯNG chưa từng delivered
         if ((hasExtendUpdateContains(order, "customer has rejected") ||
                 hasExtendUpdateContains(order, "package has been rejected") ||
                 hasExtendUpdateContains(order, "has rejected the package"))
@@ -323,39 +357,31 @@ public class OrderStatusValidator {
             return false;
         }
 
-        // ===== BƯỚC 2: ĐIỀU KIỆN KHẲNG ĐỊNH =====
-
-        // Khẳng định 0: Đã từng delivered trong lịch sử (ưu tiên cao nhất)
+        // BƯỚC 2: KHẲNG ĐỊNH
         if (everDelivered) {
             return true;
         }
 
-        // Khẳng định 1: partner_status = "delivered"
         if (hasPartnerStatus(order, "delivered")) {
             return true;
         }
 
-        // Khẳng định 2: extend_update có "package delivered" / "delivered successfully"
         if (hasExtendUpdateContains(order, "package delivered") ||
                 hasExtendUpdateContains(order, "delivered successfully") ||
                 hasExtendUpdateContains(order, "giao hàng thành công")) {
             return true;
         }
 
-        // Khẳng định 3: tracking_histories có "delivered"
         if (hasTrackingContains(order, "package delivered") ||
                 hasTrackingContains(order, "delivered successfully")) {
             return true;
         }
 
-        // Khẳng định 4: histories có shopee_status = COMPLETED
         if (hasShopeeStatusInHistories(order, "COMPLETED")) {
             return true;
         }
 
-        // Khẳng định 5: status = 4 VÀ không có điều kiện loại trừ nào
-        // (Đã check hết điều kiện loại trừ ở trên, nếu đến đây là an toàn)
-        if (order.getStatus() != null && order.getStatus() == 4) {
+        if (order.getStatus() != null && order.getStatus() == 3) {
             return true;
         }
 
@@ -364,76 +390,62 @@ public class OrderStatusValidator {
 
     /**
      * TikTok: Xác định đơn hoàn/trả hàng
-     *
-     * NGUYÊN TẮC: Ưu tiên các dấu hiệu TRỰC TIẾP nhất
-     *
-     * Thứ tự ưu tiên (cao → thấp):
-     * 1. return_quantity / returning_quantity (⭐⭐⭐⭐⭐)
-     * 2. status_name = "returning" (⭐⭐⭐⭐⭐)
-     * 3. return_fee = true (⭐⭐⭐⭐)
-     * 4. SHIPPED → CANCEL/CANCELLED (⭐⭐⭐⭐)
-     * 5. partner_status = "returned"/"returning" (⭐⭐⭐⭐)
-     * 6. extend_update có "returned"/"rejected" (⭐⭐⭐)
-     * 7. COD âm (⭐⭐⭐)
      */
     private static boolean isTikTokReturned(FacebookOrderDto order) {
-        // Priority 1 (⭐⭐⭐⭐⭐): return_quantity > 0 hoặc returning_quantity > 0
+        // Priority 1: status = 4 (RETURNING) hoặc 5 (RETURNED)
+        if (order.getStatus() != null &&
+                (order.getStatus() == 4 || order.getStatus() == 5)) {
+            return true;
+        }
+
+        // Priority 2: return_quantity > 0 hoặc returning_quantity > 0
         if (hasReturnQuantityInItems(order)) {
             return true;
         }
 
-        // Priority 2 (⭐⭐⭐⭐⭐): status_name = "returning"
+        // Priority 3: status_name = "returning"
         String statusName = order.getStatusName();
         if ("returning".equalsIgnoreCase(statusName)) {
             return true;
         }
 
-        // Priority 3 (⭐⭐⭐⭐): histories có return_fee = true
+        // Priority 4: histories có return_fee = true
         if (hasReturnFeeInHistories(order)) {
             return true;
         }
 
-        // Priority 4 (⭐⭐⭐⭐): histories có SHIPPED/IN_TRANSIT → CANCEL/CANCELLED
+        // Priority 5: histories có SHIPPED/IN_TRANSIT → CANCEL/CANCELLED
         if (hasCancelAfterShippedInHistories(order)) {
             return true;
         }
 
-        // Priority 5 (⭐⭐⭐⭐): partner_status = "returned" hoặc "returning"
+        // Priority 6: partner_status = "returned" hoặc "returning"
         if (hasPartnerStatus(order, "returned") || hasPartnerStatus(order, "returning")) {
             return true;
         }
 
-        // Priority 6 (⭐⭐⭐⭐): partner.is_returned = true
+        // Priority 7: partner.is_returned = true
         if (hasPartnerIsReturned(order)) {
             return true;
         }
 
-        // Priority 7 (⭐⭐⭐): extend_update có "returned to seller" / "being returned"
+        // Priority 8: extend_update có "returned to seller" / "being returned"
         if (hasExtendUpdateContains(order, "returned to the seller") ||
                 hasExtendUpdateContains(order, "being returned to the seller") ||
                 hasExtendUpdateContains(order, "return package")) {
             return true;
         }
 
-        // Priority 8 (⭐⭐⭐): extend_update có "rejected"
+        // Priority 9: extend_update có "rejected"
         if (hasExtendUpdateContains(order, "customer has rejected") ||
                 hasExtendUpdateContains(order, "package has been rejected") ||
                 hasExtendUpdateContains(order, "has rejected the package")) {
             return true;
         }
 
-        // Priority 9 (⭐⭐⭐): COD âm trong histories (dấu hiệu hoàn tiền)
+        // Priority 10: COD âm trong histories
         if (hasNegativeCodInHistories(order)) {
             return true;
-        }
-
-        // Priority 10 (⭐⭐): status = 5 (REFUNDED) + có dấu hiệu return khác
-        if (order.getStatus() != null && order.getStatus() == 5) {
-            // Kết hợp với các điều kiện khác để xác định là return
-            if (hasExtendUpdateContains(order, "return") ||
-                    hasTrackingContains(order, "return")) {
-                return true;
-            }
         }
 
         return false;
@@ -441,17 +453,13 @@ public class OrderStatusValidator {
 
     /**
      * TikTok: Xác định đơn bị hủy
-     *
-     * NGUYÊN TẮC:
-     * - CHỈ là cancelled nếu KHÔNG PHẢI returned
-     * - Cancelled = hủy TRƯỚC KHI giao, KHÔNG có hoàn hàng
      */
     private static boolean isTikTokCancelled(FacebookOrderDto order) {
         // CRITICAL: Nếu là đơn hoàn → không phải cancelled
         if (isTikTokReturned(order)) return false;
 
-        // Check 1: status = -1 (CANCELLED)
-        if (order.getStatus() != null && order.getStatus() == -1) {
+        // Check 1: status = 6 (CANCELED)
+        if (order.getStatus() != null && order.getStatus() == 6) {
             return true;
         }
 
@@ -460,7 +468,7 @@ public class OrderStatusValidator {
             return true;
         }
 
-        // Check 3: extend_update có "cancelled" hoặc "order has been cancelled"
+        // Check 3: extend_update có "cancelled"
         if (hasExtendUpdateContains(order, "cancelled") ||
                 hasExtendUpdateContains(order, "order has been cancelled")) {
             return true;
@@ -492,6 +500,29 @@ public class OrderStatusValidator {
     }
 
     // ========== HELPER METHODS ==========
+
+    /**
+     * Kiểm tra đơn hàng đã TỪNG được giao thành công chưa (dựa vào lịch sử)
+     * Dùng để phân biệt: Hoàn hủy vs Trả hàng
+     *
+     * QUAN TRỌNG: Check cả status 3 và 4
+     * - Status 3 = Delivered (giao thành công)
+     * - Status 4 = Returning (có thể là trả hàng SAU giao)
+     * - Case đặc biệt: Status 2 → 4 (hoàn hủy, bỏ qua status 3)
+     *
+     * @return true nếu đã từng có status=3 hoặc 4 trong histories
+     */
+    private static boolean hasEverBeenDelivered(FacebookOrderDto order) {
+        if (order.getHistories() == null || order.getHistories().isEmpty()) {
+            return false;
+        }
+
+        // Check trong histories có status chuyển sang 3 hoặc 4 không
+        return order.getHistories().stream()
+                .anyMatch(log -> log.getStatus() != null &&
+                        log.getStatus().getNewValue() != null &&
+                            log.getStatus().getNewValue() == 3);
+    }
 
     /**
      * Kiểm tra partner_status có giá trị cụ thể không
@@ -636,23 +667,5 @@ public class OrderStatusValidator {
         return order.getHistories().stream()
                 .anyMatch(log -> log.getNote() != null &&
                         log.getNote().asText().toLowerCase().contains("nhận hàng hoàn"));
-    }
-
-    /**
-     * Kiểm tra đơn hàng đã TỪNG được giao thành công chưa (dựa vào lịch sử)
-     * Dùng để phân biệt: Hoàn hủy vs Trả hàng
-     *
-     * @return true nếu đã từng có status=4 (DELIVERED) trong histories
-     */
-    private static boolean hasEverBeenDelivered(FacebookOrderDto order) {
-        if (order.getHistories() == null || order.getHistories().isEmpty()) {
-            return false;
-        }
-
-        // Check trong histories có status chuyển sang 4 (DELIVERED) không
-        return order.getHistories().stream()
-                .anyMatch(log -> log.getStatus() != null &&
-                        log.getStatus().getNewValue() != null &&
-                        (log.getStatus().getNewValue() == 3 || log.getStatus().getNewValue() == 4));
     }
 }

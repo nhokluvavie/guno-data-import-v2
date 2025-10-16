@@ -105,7 +105,7 @@ processing:
 scheduler:
   import:
     enabled: true
-    cron: "0 0 */2 * * *"  # Every 2 hours
+    cron: "0 */5 * * * *"
     use-parallel: true
     auto-start: false
 

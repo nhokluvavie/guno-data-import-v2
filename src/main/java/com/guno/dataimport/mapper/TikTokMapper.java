@@ -107,7 +107,7 @@ public class TikTokMapper {
                 .taxAmount(safeDouble(order.getTax()))
                 .discountAmount(safeDouble(order.getDiscount()))
                 .codAmount(safeDouble(order.getCod()))
-                .platformFee(0.0)
+                .platformFee(calculatePlatformFee(order))
                 .sellerDiscount(0.0)
                 .platformDiscount(safeDouble(order.getDiscount()))
                 .originalPrice(safeDouble(order.getTotalPriceAfterSubDiscount()))
@@ -143,15 +143,6 @@ public class TikTokMapper {
                 .sellerName(extractSellerName(order))
                 .sellerEmail(extractSellerEmail(order))
                 .build();
-    }
-
-    private boolean isOrderReturned(FacebookOrderDto order) {
-        if (order == null || order.getTrackingHistories() == null) {
-            return false;
-        }
-        return order.getTrackingHistories()
-                .stream()
-                .anyMatch(h -> "returned".equalsIgnoreCase(h.getPartnerStatus()));
     }
 
     // ================================
@@ -380,7 +371,7 @@ public class TikTokMapper {
     public ProcessingDateInfo mapToProcessingDateInfo(FacebookOrderDto order) {
         if (order == null) return null;
 
-        LocalDateTime orderDate = order.getCreatedAt();
+        LocalDateTime orderDate = order.getInsertedAt();
         if (orderDate == null) {
             orderDate = LocalDateTime.now();
         }
@@ -687,5 +678,22 @@ public class TikTokMapper {
             }
         }
         return null;
+    }
+
+    private double calculatePlatformFee(FacebookOrderDto order) {
+        if (order.getData() == null ||
+                order.getData().getAdvancedPlatformFee() == null) {
+            return 0.0;
+        }
+
+        AdvancedPlatformFee fees = order.getData().getAdvancedPlatformFee();
+        double total = 0.0;
+
+        total += safeDouble(fees.getTax());
+        total += safeDouble(fees.getPaymentFee());
+        total += safeDouble(fees.getServiceFee());
+        total += safeDouble(fees.getSellerTransactionFee());
+
+        return total;
     }
 }

@@ -13,7 +13,9 @@ import java.util.List;
 
 /**
  * Facebook Order DTO - Main order entity from Facebook API
- * UPDATED: Added seller fields (account_name, assigning_seller)
+ * UPDATED: Added advancedPlatformFee field
+ *
+ * Location: src/main/java/com/guno/dataimport/dto/platform/facebook/FacebookOrderDto.java
  */
 @Data
 @Builder
@@ -30,6 +32,9 @@ public class FacebookOrderDto {
 
     @JsonProperty("data")
     private FacebookOrderData data;
+
+    @JsonProperty("inserted_at")
+    private String insertedAt;
 
     // ========== HELPER METHODS ==========
 
@@ -73,6 +78,30 @@ public class FacebookOrderDto {
         return data != null ? LocalDateTime.parse(data.getUpdateAt()) : null;
     }
 
+    public LocalDateTime getInsertedAt() {
+        if (insertedAt == null || insertedAt.trim().isEmpty()) {
+            return null;
+        }
+
+        try {
+            // Parse UTC datetime (format: 2025-10-01T13:58:52.000Z)
+            java.time.ZonedDateTime utcTime = java.time.ZonedDateTime.parse(
+                    insertedAt,
+                    java.time.format.DateTimeFormatter.ISO_DATE_TIME
+            );
+
+            // Convert to Vietnam timezone (GMT+7)
+            java.time.ZonedDateTime vietnamTime = utcTime.withZoneSameInstant(
+                    java.time.ZoneId.of("Asia/Ho_Chi_Minh")
+            );
+
+            return vietnamTime.toLocalDateTime();
+        } catch (Exception e) {
+            // Fallback: return null if parsing fails
+            return null;
+        }
+    }
+
     public String getBillPhoneNumber() {
         return data != null ? data.getBillPhoneNumber() : null;
     }
@@ -99,7 +128,6 @@ public class FacebookOrderDto {
         return data != null ? data.getStatusName() : null;
     }
 
-    // NEW - Seller fields
     public String getAccountName() {
         return data != null ? data.getAccountName() : null;
     }
@@ -135,6 +163,15 @@ public class FacebookOrderDto {
 
     public Partner getPartner() {
         return data != null ? data.getPartner() : null;
+    }
+
+    // ========== NEW: ADVANCED PLATFORM FEE ==========
+    /**
+     * Get advanced platform fee details (Shopee only, empty for Facebook/TikTok)
+     * @return AdvancedPlatformFee object or null
+     */
+    public AdvancedPlatformFee getAdvancedPlatformFee() {
+        return data != null ? data.getAdvancedPlatformFee() : null;
     }
 
     // ========== NESTED CLASSES ==========
@@ -192,7 +229,6 @@ public class FacebookOrderDto {
         @JsonProperty("status_name")
         private String statusName;
 
-        // NEW FIELDS
         @JsonProperty("account_name")
         private String accountName;
 
@@ -218,6 +254,10 @@ public class FacebookOrderDto {
 
         @JsonProperty("note")
         private String note;
+
+        // ========== NEW FIELD ==========
+        @JsonProperty("advanced_platform_fee")
+        private AdvancedPlatformFee advancedPlatformFee;
     }
 
     @Data

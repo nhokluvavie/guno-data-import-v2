@@ -2,9 +2,6 @@ spring:
   application:
     name: guno-data-import
 
-  profiles:
-    active: ${SPRING_PROFILES_ACTIVE:prod}
-
   # Database Configuration - FIXED: Use production DB
   datasource:
     url: jdbc:postgresql://${DB_HOST:103.97.125.92}:${DB_PORT:5432}/${DB_NAME:guno_db}?useSSL=false

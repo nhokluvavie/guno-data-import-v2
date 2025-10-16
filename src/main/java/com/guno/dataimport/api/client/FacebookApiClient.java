@@ -17,7 +17,12 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Facebook API Client - Calls actual Facebook API to fetch order data
+ * Facebook API Client - FIXED VERSION
+ *
+ * FIXES:
+ * 1. ✅ Use defaultPageSize in health check (not hard-coded 1)
+ * 2. ✅ Better isApiAvailable() logic - check response data instead of status code
+ * 3. ✅ Added debug logging for availability check
  */
 @Component
 @RequiredArgsConstructor
@@ -25,7 +30,7 @@ import java.util.Map;
 public class FacebookApiClient {
 
     private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper; // Use injected ObjectMapper
+    private final ObjectMapper objectMapper;
 
     @Value("${api.facebook.base-url}")
     private String baseUrl;
@@ -55,7 +60,8 @@ public class FacebookApiClient {
      * Fetch Facebook orders from API with default date (today)
      */
     public FacebookApiResponse fetchOrders() {
-        String date = defaultDate.isEmpty() ? LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : defaultDate;
+        String date = defaultDate.isEmpty() ?
+                LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : defaultDate;
         return fetchOrders(date, 1, defaultPageSize);
     }
 
@@ -104,10 +110,6 @@ public class FacebookApiClient {
                         String.class
                 );
 
-                // Debug raw response
-//                log.debug("Raw API Response: {}", response.getBody());
-
-                // Parse manually to FacebookApiResponse
                 FacebookApiResponse apiResponse = objectMapper.readValue(response.getBody(), FacebookApiResponse.class);
 
                 if (apiResponse != null) {
@@ -139,14 +141,35 @@ public class FacebookApiClient {
     }
 
     /**
-     * Check if Facebook API is available
+     * FIXED: Check if Facebook API is available
+     *
+     * CHANGES:
+     * 1. Use defaultPageSize instead of hard-coded 1
+     * 2. Check response.getData() instead of status code
+     * 3. Add detailed debug logging
      */
     public boolean isApiAvailable() {
         try {
-            // Use a simple API call to check availability
-            String testDate = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-            FacebookApiResponse response = fetchOrders(testDate, 1, 1);
-            return response.getStatus() != null && response.getStatus() == 200;
+            // Use yesterday's date for health check (more reliable)
+            String testDate = LocalDate.now().minusDays(1)
+                    .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+
+            // FIXED: Use defaultPageSize from config instead of hard-coded 1
+            log.debug("Facebook API availability check - Date: {}, PageSize: {}", testDate, defaultPageSize);
+            FacebookApiResponse response = fetchOrders(testDate, 1, defaultPageSize);
+
+            // FIXED: Check response data instead of status code
+            boolean available = response != null
+                    && response.getData() != null
+                    && response.getOrderCount() >= 0;  // Accept 0 orders as valid
+
+            log.debug("Facebook API availability result: {} (orders: {}, status: {}, code: {})",
+                    available, response != null ? response.getOrderCount() : "null",
+                    response != null ? response.getStatus() : "null",
+                    response != null ? response.getCode() : "null");
+
+            return available;
+
         } catch (Exception e) {
             log.warn("Facebook API availability check failed: {}", e.getMessage());
             return false;
@@ -173,7 +196,7 @@ public class FacebookApiClient {
         params.forEach((key, value) ->
                 urlBuilder.append(key).append("=").append(value).append("&"));
 
-        return urlBuilder.substring(0, urlBuilder.length() - 1); // Remove last &
+        return urlBuilder.substring(0, urlBuilder.length() - 1);
     }
 
     private FacebookApiResponse createEmptyResponse() {

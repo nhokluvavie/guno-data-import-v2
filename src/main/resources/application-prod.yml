@@ -4,7 +4,7 @@ spring:
 
   # Database Configuration - FIXED: Use production DB
   datasource:
-    url: jdbc:postgresql://${DB_HOST:103.97.125.92}:${DB_PORT:5432}/${DB_NAME:guno_db}?useSSL=false
+    url: jdbc:postgresql://${DB_HOST:103.97.125.92}:${DB_PORT:5432}/${DB_NAME:guno_db_test}?useSSL=false
     username: ${DB_USERNAME:guno_user}
     password: ${DB_PASSWORD:UYUgjL80moKrc6WTDLbg}
     driver-class-name: org.postgresql.Driver
@@ -103,7 +103,7 @@ processing:
     fallback-method: MULTI_VALUE
     copy-batch-size: 10000
 
-# Scheduler Configuration - FIXED: Every 2 hours (production)
+# Scheduler Configuration - FIXED: Every 5 minutes (production)
 scheduler:
   import:
     enabled: ${SCHEDULER_ENABLED:true}

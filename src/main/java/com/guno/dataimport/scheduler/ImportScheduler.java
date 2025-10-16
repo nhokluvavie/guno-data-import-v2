@@ -31,7 +31,7 @@ public class ImportScheduler {
     /**
      * Scheduled import job - runs every 2 hours
      */
-    @Scheduled(cron = "${scheduler.import.cron:}")
+    @Scheduled(cron = "${scheduler.import.cron:0 */5 * * * *}")
     public void scheduledImport() {
         log.info("=== SCHEDULED IMPORT STARTED ===");
 

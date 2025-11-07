@@ -5,6 +5,7 @@ import com.guno.dataimport.dto.platform.facebook.FacebookCustomer;
 import com.guno.dataimport.dto.platform.facebook.FacebookItemDto;
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
 import com.guno.dataimport.entity.*;
+import com.guno.dataimport.util.GeographyHelper;
 import com.guno.dataimport.util.KeyGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -229,38 +230,38 @@ public class FacebookMapper {
     public GeographyInfo mapToGeographyInfo(FacebookOrderDto order) {
         if (order == null) return null;
 
-        String province = getProvinceName(order);
-        String district = getDistrictName(order);
+        String province = order.getProvinceSafe();
+        String district = order.getDistrictSafe();
 
         return GeographyInfo.builder()
                 .orderId(order.getOrderId())
                 .geographyKey(KeyGenerator.generateGeographyKey(province, district))
                 .countryCode("VN")
                 .countryName("Vietnam")
+                .provinceName(province)
+                .districtName(district)
+                .isUrban(GeographyHelper.isUrbanProvince(province))
+                .isMetropolitan(GeographyHelper.isMetroProvince(province))
+                .economicTier(GeographyHelper.getEconomicTier(province))
+                .shippingZone(GeographyHelper.getShippingZone(province))
+                .standardDeliveryDays(GeographyHelper.getDeliveryDays(province))
+                .expressDeliveryAvailable(true)
+                .latitude(0.0)
+                .longitude(0.0)
                 .regionCode(null)
                 .regionName(null)
                 .provinceCode(null)
-                .provinceName(province)
                 .provinceType(null)
                 .districtCode(null)
-                .districtName(district)
                 .districtType(null)
                 .wardCode(null)
                 .wardName(null)
                 .wardType(null)
-                .isUrban(isUrbanProvince(province))
-                .isMetropolitan(isMetroProvince(province))
                 .isCoastal(false)
                 .isBorder(false)
-                .economicTier(getEconomicTier(province))
                 .populationDensity(null)
                 .incomeLevel(null)
-                .shippingZone(getShippingZone(province))
                 .deliveryComplexity(null)
-                .standardDeliveryDays(getDeliveryDays(province))
-                .expressDeliveryAvailable(true)
-                .latitude(0.0)
-                .longitude(0.0)
                 .build();
     }
 
@@ -556,11 +557,6 @@ public class FacebookMapper {
         return province != null && !province.trim().isEmpty() ? province.trim() : "Unknown";
     }
 
-    private String getDistrictName(FacebookOrderDto order) {
-        String district = order.getNewDistrictName();
-        return district != null && !district.trim().isEmpty() ? district.trim() : "Unknown";
-    }
-
     private boolean isUrbanProvince(String province) {
         return province != null && (
                 province.contains("Hà Nội") || province.contains("Hồ Chí Minh") ||
@@ -570,25 +566,6 @@ public class FacebookMapper {
 
     private boolean isMetroProvince(String province) {
         return province != null && (province.contains("Hà Nội") || province.contains("Hồ Chí Minh"));
-    }
-
-    private String getEconomicTier(String province) {
-        if (isMetroProvince(province)) return "TIER_1";
-        if (isUrbanProvince(province)) return "TIER_2";
-        return "TIER_3";
-    }
-
-    private String getShippingZone(String province) {
-        if (province == null) return "ZONE_3";
-        if (province.contains("Hà Nội") || province.contains("Hồ Chí Minh")) return "ZONE_1";
-        if (isUrbanProvince(province)) return "ZONE_2";
-        return "ZONE_3";
-    }
-
-    private Integer getDeliveryDays(String province) {
-        if (isMetroProvince(province)) return 1;
-        if (isUrbanProvince(province)) return 2;
-        return 3;
     }
 
     // ================================
@@ -608,16 +585,6 @@ public class FacebookMapper {
         return order.getItems().stream()
                 .mapToInt(item -> safeInt(item.getQuantity()))
                 .sum();
-    }
-
-    private boolean isDelivered(FacebookOrderDto order) {
-        Integer status = order.getStatus();
-        return status != null && status == 4;
-    }
-
-    private boolean isCancelled(FacebookOrderDto order) {
-        Integer status = order.getStatus();
-        return status != null && status == -1;
     }
 
     private boolean hasAd(FacebookOrderDto order) {

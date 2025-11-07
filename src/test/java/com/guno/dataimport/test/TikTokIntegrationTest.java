@@ -1,6 +1,8 @@
 package com.guno.dataimport.test;
 
 import com.guno.dataimport.DataImportApplication;
+import com.guno.dataimport.api.client.FacebookApiClient;
+import com.guno.dataimport.api.client.ShopeeApiClient;
 import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ProcessingResult;
@@ -11,18 +13,24 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.ActiveProfiles;
+
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 /**
- * TikTok Integration Test - Full day data processing with pagination
- * SIMPLIFIED: Single test case for complete daily data import
- * REUSES: FacebookApiResponse (same JSON structure as Facebook)
+ * TikTok Integration Test - FIXED VERSION
+ *
+ * FIXES:
+ * - Mock FacebookApiClient và ShopeeApiClient để chỉ test TikTok API
+ * - Ngăn chặn việc gọi không cần thiết đến các API khác
  */
 @SpringBootTest(classes = DataImportApplication.class)
 @ActiveProfiles("test")
@@ -34,6 +42,13 @@ class TikTokIntegrationTest {
 
     @Autowired
     private BatchProcessor batchProcessor;
+
+    // Mock các API client không cần thiết
+    @MockBean
+    private FacebookApiClient facebookApiClient;
+
+    @MockBean
+    private ShopeeApiClient shopeeApiClient;
 
     @Value("${api.tiktok.default-date}")
     private String testDate;
@@ -50,6 +65,10 @@ class TikTokIntegrationTest {
         log.info("🎯 TIKTOK FULL DAY DATA TEST");
         log.info("Date: {} | PageSize: {} | Session: {}", testDate, pageSize, SESSION_ID);
         log.info("=".repeat(60));
+
+        // Mock Facebook và Shopee API để trả về false (không available)
+        when(facebookApiClient.isApiAvailable()).thenReturn(false);
+        when(shopeeApiClient.isApiAvailable()).thenReturn(false);
 
         long startTime = System.currentTimeMillis();
         List<Object> allOrders = new ArrayList<>();
@@ -74,91 +93,78 @@ class TikTokIntegrationTest {
 
                 if (response.getData() == null || response.getData().getOrders() == null
                         || response.getData().getOrders().isEmpty()) {
-                    log.info("   ✅ No more TikTok data at page {}", currentPage);
-                    break;
-                }
-
-                int pageOrders = response.getData().getOrders().size();
-                allOrders.addAll(response.getData().getOrders().stream()
-                        .map(order -> (Object) order)
-                        .toList());
-
-                log.info("   📦 TikTok Page {} collected: {} orders", currentPage, pageOrders);
-
-                // Check if this is the last page
-                if (pageOrders < pageSize) {
-                    log.info("   🏁 Last page detected (got {} < {})", pageOrders, pageSize);
+                    log.info("   ✅ No more data at page {} - Stopping pagination", currentPage);
                     hasMoreData = false;
                 } else {
+                    int pageOrderCount = response.getData().getOrders().size();
+                    allOrders.addAll(response.getData().getOrders());
+                    log.info("   📦 Page {} collected: {} orders (Total: {})",
+                            currentPage, pageOrderCount, allOrders.size());
+
+                    // Check if we reached the end
+                    if (pageOrderCount < pageSize) {
+                        log.info("   ✅ Partial page detected - Last page reached");
+                        hasMoreData = false;
+                    }
+
                     currentPage++;
+                }
+
+                // Safety limit to prevent infinite loops
+                if (currentPage > 100) {
+                    log.warn("   ⚠️ Safety limit reached (100 pages) - Stopping");
+                    break;
                 }
             }
 
-            log.info("📊 TikTok Collection Summary:");
-            log.info("   - Total API Calls: {}", totalApiCalls);
-            log.info("   - Total Orders: {}", allOrders.size());
-            log.info("   - Pages Processed: {}", currentPage);
+            long collectionTime = System.currentTimeMillis() - startTime;
+            log.info("📊 Collection Summary:");
+            log.info("   Total Orders: {}", allOrders.size());
+            log.info("   API Calls: {}", totalApiCalls);
+            log.info("   Collection Time: {}ms", collectionTime);
 
-            // Step 2: Process all collected data (TikTok orders go to tbl_customer with segment='TIKTOK')
-            log.info("🔄 Step 2: Processing TikTok Data");
-            ProcessingResult result = null;
-
+            // Step 2: Process all collected data
             if (!allOrders.isEmpty()) {
+                log.info("🔄 Step 2: Processing {} orders", allOrders.size());
+
                 CollectedData collectedData = new CollectedData();
-                collectedData.setTikTokOrders(allOrders); // Set as TikTok orders for proper mapping
+                collectedData.setTikTokOrders(allOrders);
 
-                long processingStart = System.currentTimeMillis();
-                result = batchProcessor.processCollectedData(collectedData);
-                long processingDuration = System.currentTimeMillis() - processingStart;
+                long processingStartTime = System.currentTimeMillis();
+                ProcessingResult result = batchProcessor.processCollectedData(collectedData);
+                long processingTime = System.currentTimeMillis() - processingStartTime;
 
-                log.info("   📋 TikTok processing completed in {}ms", processingDuration);
-                log.info("   💾 Records processed: {}", result.getSuccessCount());
-                log.info("   ❌ Failed records: {}", result.getFailedCount());
-                log.info("   🎯 Platform: TikTok (customer_segment='TIKTOK')");
-            } else {
-                log.info("   ⚠️ No TikTok data to process");
-            }
+                log.info("✅ Processing Complete:");
+                log.info("   Success: {}", result.getSuccessCount());
+                log.info("   Failed: {}", result.getFailedCount());
+                log.info("   Processing Time: {}ms", processingTime);
+                log.info("   Success Rate: {}%", result.getSuccessRate());
 
-            // Step 3: Final Results
-            long totalDuration = System.currentTimeMillis() - startTime;
-            log.info("=".repeat(60));
-            log.info("✅ TIKTOK FINAL RESULTS:");
-            log.info("   Date Processed: {}", testDate);
-            log.info("   Total Duration: {}ms ({:.1f}s)", totalDuration, totalDuration / 1000.0);
-            log.info("   TikTok API Performance:");
-            log.info("     - Total Calls: {}", totalApiCalls);
-            log.info("     - Avg per Call: {:.1f}ms", totalApiCalls > 0 ? (double) totalDuration / totalApiCalls : 0);
-            log.info("   TikTok Data Summary:");
-            log.info("     - Orders Collected: {}", allOrders.size());
-            log.info("     - Orders Processed: {}", result != null ? result.getSuccessCount() : 0);
-            log.info("     - Success Rate: {}%", calculateSuccessRate(result, allOrders.size()));
-            log.info("   TikTok Features:");
-            log.info("     - Customer Segment: 'TIKTOK'");
-            log.info("     - Shop ID Prefix: 'TIKTOK_'");
-            log.info("     - Product ID Prefix: 'TT_'");
-            log.info("     - Payment Provider: 'TIKTOK_PAY'");
-            log.info("     - Shipping Provider: 'TikTok Shop Logistics'");
-            log.info("   Status: {}", allOrders.size() > 0 ? "SUCCESS ✅" : "NO_DATA ⚠️");
-            log.info("=".repeat(60));
-
-            // Assertions
-            assertThat(totalApiCalls).isGreaterThan(0);
-            if (allOrders.size() > 0) {
+                // Assertions
                 assertThat(result).isNotNull();
-                assertThat(result.getSuccessCount()).isGreaterThanOrEqualTo(0);
+                assertThat(result.getTotalProcessed()).isEqualTo(allOrders.size());
+                assertThat(result.getSuccessCount()).isGreaterThan(0);
+            } else {
+                log.warn("⚠️ No orders collected - Skipping processing");
             }
+
+            // Final summary
+            long totalTime = System.currentTimeMillis() - startTime;
+            log.info("=".repeat(60));
+            log.info("🎉 TEST COMPLETED");
+            log.info("Total Time: {}ms | Orders: {} | API Calls: {}",
+                    totalTime, allOrders.size(), totalApiCalls);
+            log.info("=".repeat(60));
+
+            // Verify mocks were not called
+            verify(facebookApiClient, atMost(1)).isApiAvailable(); // Only in system readiness check
+            verify(shopeeApiClient, atMost(1)).isApiAvailable(); // Only in system readiness check
+            verify(facebookApiClient, never()).fetchOrders(anyString(), anyInt(), anyInt());
+            verify(shopeeApiClient, never()).fetchOrders(anyString(), anyInt(), anyInt());
 
         } catch (Exception e) {
-            log.error("❌ TikTok test failed: {}", e.getMessage(), e);
-            fail("TikTok integration test failed: " + e.getMessage());
+            log.error("❌ Test failed with exception", e);
+            fail("Test failed: " + e.getMessage());
         }
-    }
-
-    private String calculateSuccessRate(ProcessingResult result, int totalOrders) {
-        if (result == null || totalOrders == 0) {
-            return "N/A";
-        }
-        double rate = ((double) result.getSuccessCount() / totalOrders) * 100;
-        return String.format("%.1f", rate);
     }
 }

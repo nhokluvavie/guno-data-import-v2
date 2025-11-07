@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 
 /**
  * Order Entity - Maps to tbl_order table
- * UPDATED: Added seller fields for schema_new.sql
+ * UPDATED: Added 5 new fields for refund/return/exchange handling
  */
 @Data
 @Builder
@@ -68,8 +68,49 @@ public class Order {
     private Integer rawData;
     private Integer platformSpecificData;
 
-    // NEW FIELDS for schema_new.sql
-    private String sellerId;      // seller_id
-    private String sellerName;    // seller_name
-    private String sellerEmail;   // seller_email
+    // Seller fields
+    private String sellerId;
+    private String sellerName;
+    private String sellerEmail;
+    private Long latestStatus;
+
+    // ================================
+    // NEW FIELDS - Refund/Return/Exchange
+    // ================================
+
+    /**
+     * isRefunded - Indicates if order has been refunded
+     * TikTok: from tiktok_data.return_refund.return_type
+     * Facebook: NULL (not supported)
+     * Shopee: from existing logic
+     */
+    private Boolean isRefunded;
+
+    /**
+     * refundAmount - Total amount refunded
+     * TikTok: from tiktok_data.return_refund.refund_amount.refund_total
+     * Facebook: NULL
+     * Shopee: calculated from items
+     */
+    private Double refundAmount;
+
+    /**
+     * refundDate - Date when refund was processed
+     * TikTok: from tiktok_data.return_refund.update_time (converted from Unix timestamp)
+     * Facebook: NULL
+     * Shopee: from history
+     */
+    private String refundDate;
+
+    /**
+     * isExchanged - Indicates if order is an exchange
+     * ALL PLATFORMS: Check if order has tag "GH1P"
+     */
+    @Builder.Default private Boolean isExchanged = false;
+
+    /**
+     * cancelReason - Reason for cancellation
+     * ALL PLATFORMS: Extracted from order notes/history when status = 6 (Canceled)
+     */
+    private String cancelReason;
 }

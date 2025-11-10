@@ -554,17 +554,6 @@ public class ShopeeMapper {
         return province != null && !province.trim().isEmpty() ? province.trim() : "Unknown";
     }
 
-    private boolean isUrbanProvince(String province) {
-        return province != null && (
-                province.contains("Hà Nội") || province.contains("Hồ Chí Minh") ||
-                        province.contains("Đà Nẵng") || province.contains("Hải Phòng")
-        );
-    }
-
-    private boolean isMetroProvince(String province) {
-        return province != null && (province.contains("Hà Nội") || province.contains("Hồ Chí Minh"));
-    }
-
     // ================================
     // HELPER METHODS - GENERAL
     // ================================

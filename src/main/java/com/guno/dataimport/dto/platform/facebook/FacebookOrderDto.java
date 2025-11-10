@@ -287,6 +287,8 @@ public class FacebookOrderDto {
         private String note;
         @JsonProperty("advanced_platform_fee")
         private AdvancedPlatformFee advancedPlatformFee;
+        @JsonProperty("returned_reason")
+        private String returnedReason;
     }
 
     @Data

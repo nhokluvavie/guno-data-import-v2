@@ -551,17 +551,6 @@ public class TikTokMapper {
         return province != null && !province.trim().isEmpty() ? province.trim() : "Unknown";
     }
 
-    private boolean isUrbanProvince(String province) {
-        return province != null && (
-                province.contains("Hà Nội") || province.contains("Hồ Chí Minh") ||
-                        province.contains("Đà Nẵng") || province.contains("Hải Phòng")
-        );
-    }
-
-    private boolean isMetroProvince(String province) {
-        return province != null && (province.contains("Hà Nội") || province.contains("Hồ Chí Minh"));
-    }
-
     // ================================
     // HELPER METHODS - GENERAL
     // ================================
@@ -679,31 +668,31 @@ public class TikTokMapper {
     }
 
     private String extractCancelReason(FacebookOrderDto order) {
-        // Only extract cancel reason if order is cancelled (status = 6)
-        if (order.getStatus() == null || order.getStatus() != 6) {
-            return null;
-        }
-
-        // Try to get from order notes
-        if (order.getData() != null && order.getData().getNote() != null
-                && !order.getData().getNote().trim().isEmpty()) {
-            return order.getData().getNote().trim();
-        }
-
-        // Try to get from history transition reason
-        List<ChangedLog> histories = order.getHistories();
-        if (histories != null && !histories.isEmpty()) {
-            for (ChangedLog log : histories) {
-                if (log.getStatus() != null
-                        && log.getStatus().getNewValue() != null
-                        && log.getStatus().getNewValue() == 6) {
-                    // Found cancelled transition, check for reason
-                    // You may need to add getTransitionReason() to ChangedLog if available
-                    return "Order cancelled"; // Default message
-                }
+        // PRIORITY 1: TikTok return_reason_text (cho returned/refunded orders)
+        if (order.hasRefundData()) {
+            String returnReasonText = order.getTiktokData().getReturnRefund().getReturnReasonText();
+            if (returnReasonText != null && !returnReasonText.trim().isEmpty()) {
+                return returnReasonText.trim();
             }
         }
 
-        return "Order cancelled"; // Default fallback
+        // PRIORITY 2: Cancelled order reason (status = 6)
+        if (order.getStatus() != null && order.getStatus() == 6) {
+            // Check data.returned_reason_name
+            if (order.getData() != null && order.getData().getReturnedReason() != null
+                    && !order.getData().getReturnedReason().trim().isEmpty()) {
+                return order.getData().getReturnedReason().trim();
+            }
+
+            // Check data.note
+            if (order.getData() != null && order.getData().getNote() != null
+                    && !order.getData().getNote().trim().isEmpty()) {
+                return order.getData().getNote().trim();
+            }
+
+            return "Order cancelled";
+        }
+
+        return null;
     }
 }

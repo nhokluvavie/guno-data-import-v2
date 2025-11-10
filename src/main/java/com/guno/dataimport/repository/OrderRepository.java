@@ -13,12 +13,21 @@ import org.springframework.stereotype.Repository;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
  * Order Repository - JDBC operations with COPY FROM optimization
- * FIXED: NULL handling for rawData and platformSpecificData
+ * UPDATED: Added 6 new fields for refund/return/exchange handling
+ *
+ * NEW FIELDS:
+ * - latest_status (bigint)
+ * - is_refunded (boolean)
+ * - refund_amount (numeric)
+ * - refund_date (varchar)
+ * - is_exchanged (boolean)
+ * - cancel_reason (varchar)
  */
 @Repository
 @RequiredArgsConstructor
@@ -27,6 +36,7 @@ public class OrderRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
+    // UPDATED: Added 6 new fields
     private static final String UPSERT_SQL = """
     INSERT INTO tbl_order (
         order_id, customer_id, shop_id, internal_uuid, order_count, item_quantity,
@@ -39,8 +49,9 @@ public class OrderRepository {
         customer_order_sequence, customer_lifetime_orders, customer_lifetime_value,
         days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
         aov, shipping_cost_ratio, created_at, raw_data, platform_specific_data,
-        seller_id, seller_name, seller_email
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        seller_id, seller_name, seller_email, latest_status, is_refunded, refund_amount,
+        refund_date, is_exchanged, cancel_reason
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (order_id) DO UPDATE SET
         shop_id = EXCLUDED.shop_id,
         item_quantity = EXCLUDED.item_quantity,
@@ -52,9 +63,16 @@ public class OrderRepository {
         is_returned = EXCLUDED.is_returned,
         seller_id = EXCLUDED.seller_id,
         seller_name = EXCLUDED.seller_name,
-        seller_email = EXCLUDED.seller_email
+        seller_email = EXCLUDED.seller_email,
+        latest_status = EXCLUDED.latest_status,
+        is_refunded = EXCLUDED.is_refunded,
+        refund_amount = EXCLUDED.refund_amount,
+        refund_date = EXCLUDED.refund_date,
+        is_exchanged = EXCLUDED.is_exchanged,
+        cancel_reason = EXCLUDED.cancel_reason
     """;
 
+    // UPDATED: Added 6 new fields
     private static final String COPY_SQL = """
     COPY tbl_order (
         order_id, customer_id, shop_id, internal_uuid, order_count, item_quantity,
@@ -67,7 +85,8 @@ public class OrderRepository {
         customer_order_sequence, customer_lifetime_orders, customer_lifetime_value,
         days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
         aov, shipping_cost_ratio, created_at, raw_data, platform_specific_data,
-        seller_id, seller_name, seller_email
+        seller_id, seller_name, seller_email, latest_status, is_refunded, refund_amount,
+        refund_date, is_exchanged, cancel_reason
     ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
     """;
 
@@ -78,7 +97,7 @@ public class OrderRepository {
         if (orders == null || orders.isEmpty()) return 0;
         try {
             return tempTableUpsert(orders, "tbl_order",
-                    "order_id", "gross_revenue = EXCLUDED.gross_revenue, is_delivered = EXCLUDED.is_delivered");
+                    "order_id", "gross_revenue = EXCLUDED.gross_revenue, is_delivered = EXCLUDED.is_delivered, latest_status = EXCLUDED.latest_status, is_refunded = EXCLUDED.is_refunded");
         } catch (Exception e) {
             log.warn("Temp table failed, using batch: {}", e.getMessage());
             return executeBatchUpsert(orders);
@@ -93,7 +112,7 @@ public class OrderRepository {
 
         String sql = "SELECT * FROM tbl_order WHERE order_id = ANY(?)";
         return jdbcTemplate.query(sql, orderRowMapper(), orderIds.toArray(new String[0]))
-                .stream().collect(java.util.stream.Collectors.toMap(
+                .stream().collect(Collectors.toMap(
                         Order::getOrderId, order -> order));
     }
 
@@ -179,6 +198,7 @@ public class OrderRepository {
     }
 
     /**
+     * UPDATED: Added 6 new fields to CSV generation
      * FIXED: Handle NULL values for rawData and platformSpecificData
      */
     private String generateCsvData(List<Order> orders) {
@@ -199,19 +219,32 @@ public class OrderRepository {
                         order.getCustomerLifetimeOrders(), order.getCustomerLifetimeValue(), order.getDaysSinceLastOrder(),
                         order.getPromotionImpact(), order.getAdRevenue(), order.getOrganicRevenue(), order.getAov(),
                         order.getShippingCostRatio(), CsvFormatter.formatDateTime(order.getCreatedAt()),
-                        order.getRawData() != null ? order.getRawData() : "",  // ← FIX: Handle NULL
-                        order.getPlatformSpecificData() != null ? order.getPlatformSpecificData() : "",  // ← FIX: Handle NULL
-                        order.getSellerId(), order.getSellerName(), order.getSellerEmail()
+                        order.getRawData() != null ? order.getRawData() : "",
+                        order.getPlatformSpecificData() != null ? order.getPlatformSpecificData() : "",
+                        order.getSellerId(), order.getSellerName(), order.getSellerEmail(),
+                        // NEW FIELDS:
+                        order.getLatestStatus(),
+                        CsvFormatter.formatBoolean(order.getIsRefunded()),
+                        order.getRefundAmount(),
+                        order.getRefundDate(),
+                        CsvFormatter.formatBoolean(order.getIsExchanged()),
+                        order.getCancelReason()
                 ))
-                .collect(java.util.stream.Collectors.joining("\n"));
+                .collect(Collectors.joining("\n"));
     }
 
+    /**
+     * UPDATED: Added 6 new fields to batch upsert
+     */
     public int executeBatchUpsert(List<Order> orders) {
         log.info("Batch upserting {} orders", orders.size());
         return jdbcTemplate.batchUpdate(UPSERT_SQL, orders.stream()
                 .map(this::mapToParams).toList()).length;
     }
 
+    /**
+     * UPDATED: Added 6 new fields to params array
+     */
     private Object[] mapToParams(Order o) {
         return new Object[]{
                 o.getOrderId(), o.getCustomerId(), o.getShopId(), o.getInternalUuid(),
@@ -227,10 +260,16 @@ public class OrderRepository {
                 o.getCustomerLifetimeOrders(), o.getCustomerLifetimeValue(), o.getDaysSinceLastOrder(),
                 o.getPromotionImpact(), o.getAdRevenue(), o.getOrganicRevenue(), o.getAov(),
                 o.getShippingCostRatio(), o.getCreatedAt(), o.getRawData(), o.getPlatformSpecificData(),
-                o.getSellerId(), o.getSellerName(), o.getSellerEmail()
+                o.getSellerId(), o.getSellerName(), o.getSellerEmail(),
+                // NEW FIELDS:
+                o.getLatestStatus(), o.getIsRefunded(), o.getRefundAmount(),
+                o.getRefundDate(), o.getIsExchanged(), o.getCancelReason()
         };
     }
 
+    /**
+     * UPDATED: Added 6 new fields to row mapper
+     */
     private RowMapper<Order> orderRowMapper() {
         return (rs, rowNum) -> Order.builder()
                 .orderId(rs.getString("order_id"))
@@ -275,12 +314,21 @@ public class OrderRepository {
                 .organicRevenue(rs.getDouble("organic_revenue"))
                 .aov(rs.getDouble("aov"))
                 .shippingCostRatio(rs.getDouble("shipping_cost_ratio"))
-                .createdAt(rs.getTimestamp("created_at") != null ? rs.getTimestamp("created_at").toLocalDateTime() : null)
-                .rawData(rs.getObject("raw_data", Integer.class))
-                .platformSpecificData(rs.getObject("platform_specific_data", Integer.class))
+                .createdAt(rs.getString("created_at") != null ?
+                        LocalDateTime.parse(rs.getString("created_at")) : null)
+                .rawData(rs.getObject("raw_data") != null ? rs.getInt("raw_data") : null)
+                .platformSpecificData(rs.getObject("platform_specific_data") != null ?
+                        rs.getInt("platform_specific_data") : null)
                 .sellerId(rs.getString("seller_id"))
                 .sellerName(rs.getString("seller_name"))
                 .sellerEmail(rs.getString("seller_email"))
+                // NEW FIELDS:
+                .latestStatus(rs.getObject("latest_status") != null ? rs.getLong("latest_status") : null)
+                .isRefunded(rs.getObject("is_refunded") != null ? rs.getBoolean("is_refunded") : null)
+                .refundAmount(rs.getObject("refund_amount") != null ? rs.getDouble("refund_amount") : null)
+                .refundDate(rs.getString("refund_date"))
+                .isExchanged(rs.getObject("is_exchanged") != null ? rs.getBoolean("is_exchanged") : null)
+                .cancelReason(rs.getString("cancel_reason"))
                 .build();
     }
 }

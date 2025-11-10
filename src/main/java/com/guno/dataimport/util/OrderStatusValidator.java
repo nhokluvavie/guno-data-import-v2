@@ -7,7 +7,12 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * OrderStatusValidator - Updated với logic TikTok tiktok_data
- * Version 7.0 - Tối ưu với tiktok_data.return_refund
+ * Version 7.1 - FIXED: isTikTokDelivered bug
+ *
+ * CHANGELOG:
+ * - Bug Fix: isTikTokDelivered() không còn check return_status
+ * - Đơn hàng có status=3 luôn là DELIVERED, bất kể có return hay không
+ * - Return status chỉ dùng để xác định isReturned(), không ảnh hưởng isDelivered()
  */
 @Slf4j
 public class OrderStatusValidator {
@@ -48,25 +53,21 @@ public class OrderStatusValidator {
         };
     }
 
-    // ========== TIKTOK LOGIC (NEW - Priority tiktok_data) ==========
+    // ========== TIKTOK LOGIC (FIXED - Priority tiktok_data) ==========
 
+    /**
+     * FIXED: Không còn check return_status trong delivered
+     * Logic: Đơn hàng có status=3 thì ĐÃ DELIVERED, bất kể có return hay không
+     * Một đơn có thể VỪA delivered VỪA đang được hoàn - đây là 2 trạng thái độc lập
+     */
     private static boolean isTikTokDelivered(FacebookOrderDto order) {
-        // Nếu có return_refund → check return_status
-        if (order.hasRefundData()) {
-            String returnStatus = order.getTiktokData().getReturnRefund().getReturnStatus();
-            // Nếu đang/đã hoàn và chưa delivered thì return false
-            if (returnStatus != null && !returnStatus.contains("DELIVERED")) {
-                return false;
-            }
-        }
-
-        // Status 3 = Delivered
+        // PRIORITY 1: Status 3 = Delivered (quan trọng nhất)
         if (order.getStatus() != null && order.getStatus() == 3) return true;
 
-        // Partner status
+        // PRIORITY 2: Partner status
         if (hasPartnerStatus(order, "delivered")) return true;
 
-        // Tracking histories
+        // PRIORITY 3: Tracking histories
         if (hasTrackingContains(order, "delivered") ||
                 hasTrackingContains(order, "package delivered")) return true;
 

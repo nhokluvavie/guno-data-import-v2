@@ -49,4 +49,6 @@ public class Customer {
     @Builder.Default private Integer loyaltyPoints = 0;
     @Builder.Default private Integer referralCount = 0;
     @Builder.Default private Boolean isReferrer = false;
+
+    private String customerName;
 }

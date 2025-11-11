@@ -35,8 +35,8 @@ public class CustomerRepository {
             purchase_frequency_days, return_rate, cancellation_rate, cod_preference_rate,
             favorite_category, favorite_brand, preferred_payment_method, preferred_platform,
             primary_shipping_province, ships_to_multiple_provinces, loyalty_points,
-            referral_count, is_referrer
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            referral_count, is_referrer, customer_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (customer_id) DO UPDATE SET
             platform_customer_id = EXCLUDED.platform_customer_id,
             last_order_date = EXCLUDED.last_order_date,
@@ -54,7 +54,7 @@ public class CustomerRepository {
             purchase_frequency_days, return_rate, cancellation_rate, cod_preference_rate,
             favorite_category, favorite_brand, preferred_payment_method, preferred_platform,
             primary_shipping_province, ships_to_multiple_provinces, loyalty_points,
-            referral_count, is_referrer
+            referral_count, is_referrer, customer_name
         ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
         """;
 
@@ -175,7 +175,7 @@ public class CustomerRepository {
                         customer.getCodPreferenceRate(), customer.getFavoriteCategory(), customer.getFavoriteBrand(),
                         customer.getPreferredPaymentMethod(), customer.getPreferredPlatform(),
                         customer.getPrimaryShippingProvince(), CsvFormatter.formatBoolean(customer.getShipsToMultipleProvinces()),
-                        customer.getLoyaltyPoints(), customer.getReferralCount(), CsvFormatter.formatBoolean(customer.getIsReferrer())
+                        customer.getLoyaltyPoints(), customer.getReferralCount(), CsvFormatter.formatBoolean(customer.getIsReferrer()), customer.getCustomerName()
                 ))
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
@@ -196,7 +196,7 @@ public class CustomerRepository {
                 c.getReturnRate(), c.getCancellationRate(), c.getCodPreferenceRate(), c.getFavoriteCategory(),
                 c.getFavoriteBrand(), c.getPreferredPaymentMethod(), c.getPreferredPlatform(),
                 c.getPrimaryShippingProvince(), c.getShipsToMultipleProvinces(), c.getLoyaltyPoints(),
-                c.getReferralCount(), c.getIsReferrer()
+                c.getReferralCount(), c.getIsReferrer(), c.getCustomerName()
         };
     }
 
@@ -235,6 +235,7 @@ public class CustomerRepository {
                 .loyaltyPoints(rs.getInt("loyalty_points"))
                 .referralCount(rs.getInt("referral_count"))
                 .isReferrer(rs.getBoolean("is_referrer"))
+                .customerName(rs.getString("customer_name"))
                 .build();
     }
 }

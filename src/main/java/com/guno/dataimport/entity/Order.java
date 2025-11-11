@@ -84,7 +84,7 @@ public class Order {
      * Facebook: NULL (not supported)
      * Shopee: from existing logic
      */
-    private Boolean isRefunded;
+    @Builder.Default private Boolean isRefunded = false;
 
     /**
      * refundAmount - Total amount refunded
@@ -92,7 +92,7 @@ public class Order {
      * Facebook: NULL
      * Shopee: calculated from items
      */
-    private Double refundAmount;
+    @Builder.Default private Double refundAmount = 0.0;
 
     /**
      * refundDate - Date when refund was processed

@@ -84,6 +84,7 @@ public class TikTokMapper {
                 .loyaltyPoints(safeInt(fbCustomer.getRewardPoint()))
                 .referralCount(safeInt(fbCustomer.getCountReferrals()))
                 .isReferrer(safeBool(fbCustomer.getIsReferrer()))
+                .customerName(fbCustomer.getName())
                 .build();
     }
 

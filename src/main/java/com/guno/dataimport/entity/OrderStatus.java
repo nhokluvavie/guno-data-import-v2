@@ -24,16 +24,16 @@ public class OrderStatus {
     private Integer partnerStatusId;    // NEW - NOT NULL
 
     @Builder.Default private Integer transitionDateKey = 0;
-    private LocalDateTime transitionTimestamp;
+    @Builder.Default private LocalDateTime transitionTimestamp  = LocalDateTime.now();
     @Builder.Default private Integer durationInPreviousStatusHours = 0;
 
-    private String transitionReason;
-    private String transitionTrigger;
-    private String changedBy;
+    @Builder.Default private String transitionReason = "";
+    @Builder.Default private String transitionTrigger = "";
+    @Builder.Default private String changedBy = "";
 
     @Builder.Default private Boolean isOnTimeTransition = true;
     @Builder.Default private Boolean isExpectedTransition = true;
     @Builder.Default private Long historyKey = 0L;
 
-    private String createdAt;          // NEW - varchar(255) in schema
+    @Builder.Default private String createdAt = "";
 }

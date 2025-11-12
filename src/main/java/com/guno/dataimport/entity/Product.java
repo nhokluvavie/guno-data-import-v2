@@ -19,32 +19,32 @@ public class Product {
     private String sku;
     private String platformProductId;
 
-    private String productId;
-    private String variationId;
-    private String barcode;
-    private String productName;
-    private String productDescription;
-    private String brand;
-    private String model;
+    @Builder.Default private String productId = "";
+    @Builder.Default private String variationId = "";
+    @Builder.Default private String barcode = "";
+    @Builder.Default private String productName = "";
+    @Builder.Default private String productDescription = "";
+    @Builder.Default private String brand = "";
+    @Builder.Default private String model = "";
 
     // Category hierarchy
-    private String categoryLevel1;
-    private String categoryLevel2;
-    private String categoryLevel3;
-    private String categoryPath;
+    @Builder.Default private String categoryLevel1 = "";
+    @Builder.Default private String categoryLevel2 = "";
+    @Builder.Default private String categoryLevel3 = "";
+    @Builder.Default private String categoryPath = "";
 
     // Product attributes
-    private String color;
-    private String size;
-    private String material;
-    private String dimensions;
+    @Builder.Default private String color = "";
+    @Builder.Default private String size = "";
+    @Builder.Default private String material = "";
+    @Builder.Default private String dimensions = "";
 
     @Builder.Default private Integer weightGram = 0;
     @Builder.Default private Double costPrice = 0.0;
     @Builder.Default private Double retailPrice = 0.0;
     @Builder.Default private Double originalPrice = 0.0;
 
-    private String priceRange;
+    @Builder.Default private String priceRange = "";
 
     @Builder.Default private Boolean isActive = true;
     @Builder.Default private Boolean isFeatured = false;
@@ -52,12 +52,12 @@ public class Product {
     @Builder.Default private Boolean isNewArrival = false;
     @Builder.Default private Boolean isBestSeller = false;
 
-    private String primaryImageUrl;
+    @Builder.Default private String primaryImageUrl = "";
     @Builder.Default private Integer imageCount = 0;
 
     // SEO fields
-    private String seoTitle;
-    private String seoKeywords;
+    @Builder.Default private String seoTitle = "";
+    @Builder.Default private String seoKeywords = "";
 
-    private String skuGroup;
+    @Builder.Default private String skuGroup = "";
 }

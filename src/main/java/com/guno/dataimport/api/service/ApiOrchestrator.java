@@ -4,6 +4,7 @@ import com.guno.dataimport.api.client.FacebookApiClient;
 import com.guno.dataimport.api.client.ShopeeApiClient;
 import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.buffer.BufferedDataCollector;
+import com.guno.dataimport.config.PlatformConfig;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ImportSummary;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
@@ -11,9 +12,19 @@ import com.guno.dataimport.processor.BatchProcessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+/**
+ * ApiOrchestrator - PHASE 2: Platform enable/disable support
+ *
+ * UPDATES:
+ * 1. ✅ Inject PlatformConfig
+ * 2. ✅ Check platform enabled before collecting
+ * 3. ✅ Fix collectAndProcessInBatches() method
+ * 4. ✅ Log enabled platforms on startup
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -24,8 +35,13 @@ public class ApiOrchestrator {
     private final ShopeeApiClient shopeeApiClient;
     private final BatchProcessor batchProcessor;
     private final BufferedDataCollector bufferedDataCollector;
+    private final PlatformConfig platformConfig;
 
     private final ExecutorService executorService = Executors.newFixedThreadPool(3);
+
+    // ================================
+    // PUBLIC API
+    // ================================
 
     public CollectedData collectData(boolean useBuffer, int bufferSize) {
         if (useBuffer) {
@@ -39,7 +55,20 @@ public class ApiOrchestrator {
         return collectData(false, 0);
     }
 
+    /**
+     * MAIN METHOD: Process with batches and buffer optimization
+     */
     public ImportSummary processInBatches(int pageSize, boolean useBuffer, int bufferSize) {
+        logPlatformStatus();
+
+        if (!platformConfig.hasAnyPlatformEnabled()) {
+            log.warn("⚠️ No platforms enabled - skipping import");
+            return ImportSummary.builder()
+                    .totalApiCalls(0)
+                    .totalDbOperations(0)
+                    .build();
+        }
+
         if (useBuffer) {
             log.info("Using BUFFERED multi-platform processing - Buffer: {}, PageSize: {}", bufferSize, pageSize);
             return bufferedDataCollector.collectWithBuffer(bufferSize, pageSize);
@@ -49,18 +78,24 @@ public class ApiOrchestrator {
         }
     }
 
+    /**
+     * FIXED: Default method for scheduler
+     */
     public ImportSummary collectAndProcessInBatches() {
+        log.info("🚀 Starting scheduled batch import");
+        logPlatformStatus();
         return processInBatches(100, true, 500);
     }
 
     public ImportSummary processPageByPage(int pageSize) {
         log.info("Processing multi-platform data page by page - PageSize: {}", pageSize);
+        logPlatformStatus();
 
         CollectedData data = collectSinglePage();
         if (data.getTotalOrders() == 0) {
             log.warn("No orders collected from any platform");
             return ImportSummary.builder()
-                    .totalApiCalls(2)
+                    .totalApiCalls(platformConfig.getEnabledCount())
                     .totalDbOperations(0)
                     .build();
         }
@@ -68,7 +103,7 @@ public class ApiOrchestrator {
         var result = batchProcessor.processCollectedData(data);
 
         return ImportSummary.builder()
-                .totalApiCalls(2)
+                .totalApiCalls(platformConfig.getEnabledCount())
                 .totalDbOperations(result.getSuccessCount() * 11)
                 .processingTimeMs(result.getProcessingTimeMs())
                 .platformCounts(data.getPlatformCounts())
@@ -79,71 +114,128 @@ public class ApiOrchestrator {
         processPageByPage(100);
     }
 
+    // ================================
+    // AVAILABILITY CHECKS
+    // ================================
+
     public boolean areApisAvailable() {
-        boolean facebookAvailable = facebookApiClient.isApiAvailable();
-        boolean tikTokAvailable = tikTokApiClient.isApiAvailable();
-        boolean shopeeAvailable = shopeeApiClient.isApiAvailable();
+        logPlatformStatus();
 
-        log.info("API Availability Check - Facebook: {}, TikTok: {}, Shopee: {}", facebookAvailable, tikTokAvailable, shopeeAvailable);
+        boolean anyAvailable = false;
 
-        return facebookAvailable || tikTokAvailable || shopeeAvailable;
+        if (platformConfig.isFacebookEnabled()) {
+            boolean available = facebookApiClient.isApiAvailable();
+            log.info("Facebook API - Enabled: true, Available: {}", available);
+            anyAvailable = anyAvailable || available;
+        } else {
+            log.info("Facebook API - Enabled: false (skipped)");
+        }
+
+        if (platformConfig.isTikTokEnabled()) {
+            boolean available = tikTokApiClient.isApiAvailable();
+            log.info("TikTok API - Enabled: true, Available: {}", available);
+            anyAvailable = anyAvailable || available;
+        } else {
+            log.info("TikTok API - Enabled: false (skipped)");
+        }
+
+        if (platformConfig.isShopeeEnabled()) {
+            boolean available = shopeeApiClient.isApiAvailable();
+            log.info("Shopee API - Enabled: true, Available: {}", available);
+            anyAvailable = anyAvailable || available;
+        } else {
+            log.info("Shopee API - Enabled: false (skipped)");
+        }
+
+        return anyAvailable;
     }
 
     public boolean isFacebookApiAvailable() {
-        return facebookApiClient.isApiAvailable();
+        return platformConfig.isFacebookEnabled() && facebookApiClient.isApiAvailable();
     }
 
     public boolean isTikTokApiAvailable() {
-        return tikTokApiClient.isApiAvailable();
+        return platformConfig.isTikTokEnabled() && tikTokApiClient.isApiAvailable();
     }
 
     public boolean isShopeeApiAvailable() {
-        return shopeeApiClient.isApiAvailable();
+        return platformConfig.isShopeeEnabled() && shopeeApiClient.isApiAvailable();
     }
 
     public void shutdown() {
         executorService.shutdown();
     }
 
-    // Private methods
+    // ================================
+    // PRIVATE METHODS
+    // ================================
+
+    /**
+     * Collect single page from enabled platforms only
+     */
     private CollectedData collectSinglePage() {
-        log.info("Collecting single page from all platforms (Facebook + TikTok)");
+        log.info("Collecting single page from enabled platforms");
+        logPlatformStatus();
 
         CollectedData data = new CollectedData();
 
         try {
-            FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders("", 1, 100);
-            if (facebookResponse.getData() != null && facebookResponse.getData().getOrders() != null) {
-                data.setFacebookOrders(facebookResponse.getData().getOrders().stream()
-                        .map(order -> (Object) order)
-                        .toList());
-                log.info("Collected {} Facebook orders", data.getFacebookOrders().size());
+            // Facebook
+            if (platformConfig.isFacebookEnabled()) {
+                log.info("📘 Collecting Facebook orders...");
+                FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders("", 1, 100);
+                if (facebookResponse.getData() != null && facebookResponse.getData().getOrders() != null) {
+                    data.setFacebookOrders(facebookResponse.getData().getOrders().stream()
+                            .map(order -> (Object) order)
+                            .toList());
+                    log.info("✅ Collected {} Facebook orders", data.getFacebookOrders().size());
+                } else {
+                    log.warn("⚠️ Facebook API returned no data");
+                }
+            } else {
+                log.info("⏭️ Facebook collection skipped (disabled)");
             }
 
-            FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders("", 1, 100);
-            if (tikTokResponse.getData() != null && tikTokResponse.getData().getOrders() != null) {
-                data.setTikTokOrders(tikTokResponse.getData().getOrders().stream()
-                        .map(order -> (Object) order)
-                        .toList());
-                log.info("Collected {} TikTok orders", data.getTikTokOrders().size());
+            // TikTok
+            if (platformConfig.isTikTokEnabled()) {
+                log.info("📗 Collecting TikTok orders...");
+                FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders("", 1, 100);
+                if (tikTokResponse.getData() != null && tikTokResponse.getData().getOrders() != null) {
+                    data.setTikTokOrders(tikTokResponse.getData().getOrders().stream()
+                            .map(order -> (Object) order)
+                            .toList());
+                    log.info("✅ Collected {} TikTok orders", data.getTikTokOrders().size());
+                } else {
+                    log.warn("⚠️ TikTok API returned no data");
+                }
+            } else {
+                log.info("⏭️ TikTok collection skipped (disabled)");
             }
 
-            FacebookApiResponse shopeeResponse = shopeeApiClient.fetchOrders("", 1, 100);
-            if (shopeeResponse.getData() != null && shopeeResponse.getData().getOrders() != null) {
-                data.setShopeeOrders(shopeeResponse.getData().getOrders().stream()
-                        .map(order -> (Object) order)
-                        .toList());
-                log.info("Collected {} Shopee orders", data.getShopeeOrders().size());
+            // Shopee
+            if (platformConfig.isShopeeEnabled()) {
+                log.info("📙 Collecting Shopee orders...");
+                FacebookApiResponse shopeeResponse = shopeeApiClient.fetchOrders("", 1, 100);
+                if (shopeeResponse.getData() != null && shopeeResponse.getData().getOrders() != null) {
+                    data.setShopeeOrders(shopeeResponse.getData().getOrders().stream()
+                            .map(order -> (Object) order)
+                            .toList());
+                    log.info("✅ Collected {} Shopee orders", data.getShopeeOrders().size());
+                } else {
+                    log.warn("⚠️ Shopee API returned no data");
+                }
+            } else {
+                log.info("⏭️ Shopee collection skipped (disabled)");
             }
 
-            log.info("Total multi-platform collection: Facebook={}, TikTok={}, Shopee={}, Total={}",
+            log.info("📊 Total collection: Facebook={}, TikTok={}, Shopee={}, Total={}",
                     data.getFacebookOrders().size(),
                     data.getTikTokOrders().size(),
                     data.getShopeeOrders().size(),
                     data.getTotalOrders());
 
         } catch (Exception e) {
-            log.error("Multi-platform collection error: {}", e.getMessage(), e);
+            log.error("❌ Multi-platform collection error: {}", e.getMessage(), e);
         }
 
         return data;
@@ -151,6 +243,17 @@ public class ApiOrchestrator {
 
     private CollectedData collectDataWithBuffer(int bufferSize) {
         log.info("Collecting multi-platform data with buffer optimization - BufferSize: {}", bufferSize);
+        logPlatformStatus();
         return bufferedDataCollector.collectMultiPlatformData(bufferSize);
+    }
+
+    /**
+     * Log platform configuration status
+     */
+    private void logPlatformStatus() {
+        log.info("🔧 Platform Configuration: {}", platformConfig.getEnabledPlatforms());
+        log.info("   - Facebook: {}", platformConfig.isFacebookEnabled() ? "✅ ENABLED" : "❌ DISABLED");
+        log.info("   - TikTok: {}", platformConfig.isTikTokEnabled() ? "✅ ENABLED" : "❌ DISABLED");
+        log.info("   - Shopee: {}", platformConfig.isShopeeEnabled() ? "✅ ENABLED" : "❌ DISABLED");
     }
 }

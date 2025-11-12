@@ -18,18 +18,18 @@ public class ShippingInfo {
     private Long shippingKey;
 
     // Provider information
-    private String providerId;
-    private String providerName;
-    private String providerType;
-    private String providerTier;
+    @Builder.Default private String providerId = "";
+    @Builder.Default private String providerName = "";
+    @Builder.Default private String providerType = "";
+    @Builder.Default private String providerTier = "";
 
     // Service details
-    private String serviceType;
-    private String serviceTier;
-    private String deliveryCommitment;
-    private String shippingMethod;
-    private String pickupType;
-    private String deliveryType;
+    @Builder.Default private String serviceType = "";
+    @Builder.Default private String serviceTier = "";
+    @Builder.Default private String deliveryCommitment = "";
+    @Builder.Default private String shippingMethod = "";
+    @Builder.Default private String pickupType = "";
+    @Builder.Default private String deliveryType = "";
 
     // Fee structure
     @Builder.Default private Double baseFee = 0.0;
@@ -53,7 +53,7 @@ public class ShippingInfo {
     @Builder.Default private Double damageRate = 0.0;
 
     // Coverage
-    private String coverageProvinces;
+    @Builder.Default private String coverageProvinces = "";
     @Builder.Default private Boolean coverageNationwide = false;
     @Builder.Default private Boolean coverageInternational = false;
 }

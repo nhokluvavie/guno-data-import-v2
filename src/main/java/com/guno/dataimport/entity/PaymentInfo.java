@@ -17,9 +17,9 @@ public class PaymentInfo {
     private String orderId;
     private Long paymentKey;
 
-    private String paymentMethod;
-    private String paymentCategory;
-    private String paymentProvider;
+    @Builder.Default private String paymentMethod = "";
+    @Builder.Default private String paymentCategory = "";
+    @Builder.Default private String paymentProvider = "";
 
     @Builder.Default private Boolean isCod = false;
     @Builder.Default private Boolean isPrepaid = false;
@@ -32,7 +32,7 @@ public class PaymentInfo {
     @Builder.Default private Integer refundProcessingDays = 0;
 
     // Risk and verification
-    private String riskLevel;
+    @Builder.Default private String riskLevel = "";
     @Builder.Default private Boolean requiresVerification = false;
     @Builder.Default private Double fraudScore = 0.0;
 

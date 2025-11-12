@@ -209,13 +209,13 @@ public class FacebookOrderDto {
     }
 
     public String getRefundDate() {
-        if (!hasRefundData()) return null;
+        if (!hasRefundData()) return "";
         Long updateTime = tiktokData.getReturnRefund().getUpdateTime();
-        if (updateTime == null) return null;
+        if (updateTime == null) return "";
         try {
             return LocalDateTime.ofInstant(Instant.ofEpochSecond(updateTime), ZoneId.of("Asia/Ho_Chi_Minh")).toString();
         } catch (Exception e) {
-            return null;
+            return "";
         }
     }
 

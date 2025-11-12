@@ -64,15 +64,15 @@ public class Order {
     @Builder.Default private Double aov = 0.0;
     @Builder.Default private Double shippingCostRatio = 0.0;
 
-    private LocalDateTime createdAt;
-    private Integer rawData;
-    private Integer platformSpecificData;
+    @Builder.Default private LocalDateTime createdAt = LocalDateTime.now();
+    @Builder.Default private Integer rawData = 0;
+    @Builder.Default private Integer platformSpecificData = 0;
 
     // Seller fields
-    private String sellerId;
-    private String sellerName;
-    private String sellerEmail;
-    private Long latestStatus;
+    @Builder.Default private String sellerId = "";
+    @Builder.Default private String sellerName = "";
+    @Builder.Default private String sellerEmail = "";
+    @Builder.Default private Long latestStatus = 0L;
 
     // ================================
     // NEW FIELDS - Refund/Return/Exchange
@@ -100,7 +100,7 @@ public class Order {
      * Facebook: NULL
      * Shopee: from history
      */
-    private String refundDate;
+    @Builder.Default private String refundDate = "";
 
     /**
      * isExchanged - Indicates if order is an exchange
@@ -112,5 +112,5 @@ public class Order {
      * cancelReason - Reason for cancellation
      * ALL PLATFORMS: Extracted from order notes/history when status = 6 (Canceled)
      */
-    private String cancelReason;
+    @Builder.Default private String cancelReason = "";
 }

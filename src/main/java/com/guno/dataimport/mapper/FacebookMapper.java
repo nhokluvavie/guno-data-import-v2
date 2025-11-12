@@ -65,7 +65,7 @@ public class FacebookMapper {
                 .phoneHash(fbCustomer.getPrimaryPhone())  // Keep original phone
                 .emailHash(fbCustomer.getPrimaryEmail())  // Keep original email
                 .gender(fbCustomer.getGender())
-                .ageGroup(null)
+                .ageGroup("")
                 .customerSegment("FACEBOOK")
                 .customerTier("STANDARD")
                 .acquisitionChannel("FACEBOOK")
@@ -81,11 +81,11 @@ public class FacebookMapper {
                 .returnRate(0.0)
                 .cancellationRate(0.0)
                 .codPreferenceRate(0.0)
-                .favoriteCategory(null)
-                .favoriteBrand(null)
-                .preferredPaymentMethod(null)
+                .favoriteCategory("")
+                .favoriteBrand("")
+                .preferredPaymentMethod("")
                 .preferredPlatform("FACEBOOK")
-                .primaryShippingProvince(null)
+                .primaryShippingProvince("")
                 .shipsToMultipleProvinces(false)
                 .loyaltyPoints(safeInt(fbCustomer.getRewardPoint()))
                 .referralCount(safeInt(fbCustomer.getCountReferrals()))
@@ -184,9 +184,9 @@ public class FacebookMapper {
                     .unitPrice(price)
                     .totalPrice(price * qty)
                     .itemDiscount(safeDouble(item.getTotalDiscount()))
-                    .promotionType(null)
-                    .promotionCode(null)
-                    .itemStatus(null)
+                    .promotionType("")
+                    .promotionCode("")
+                    .itemStatus("")
                     .itemSequence(sequence.getAndIncrement())
                     .opId((long) item.getId().hashCode())
                     .build());
@@ -249,20 +249,20 @@ public class FacebookMapper {
                 .expressDeliveryAvailable(true)
                 .latitude(0.0)
                 .longitude(0.0)
-                .regionCode(null)
-                .regionName(null)
-                .provinceCode(null)
-                .provinceType(null)
-                .districtCode(null)
-                .districtType(null)
-                .wardCode(null)
-                .wardName(null)
-                .wardType(null)
+                .regionCode("")
+                .regionName("")
+                .provinceCode("")
+                .provinceType("")
+                .districtCode("")
+                .districtType("")
+                .wardCode("")
+                .wardName("")
+                .wardType("")
                 .isCoastal(false)
                 .isBorder(false)
-                .populationDensity(null)
-                .incomeLevel(null)
-                .deliveryComplexity(null)
+                .populationDensity("")
+                .incomeLevel("")
+                .deliveryComplexity("")
                 .build();
     }
 
@@ -320,10 +320,10 @@ public class FacebookMapper {
                 .providerTier("STANDARD")
                 .serviceType(serviceType)
                 .serviceTier("STANDARD")
-                .deliveryCommitment(null)
+                .deliveryCommitment("")
                 .shippingMethod("STANDARD")
-                .pickupType(null)
-                .deliveryType(null)
+                .pickupType("")
+                .deliveryType("")
                 .baseFee(safeDouble(order.getShippingFee()))
                 .weightBasedFee(0.0)
                 .distanceBasedFee(0.0)
@@ -492,9 +492,9 @@ public class FacebookMapper {
     private String getBarcode(FacebookItemDto item) {
         if (item.getVariationInfo() != null) {
             String barcode = item.getVariationInfo().getBarcode();
-            return (barcode != null && !barcode.trim().isEmpty()) ? barcode.trim() : null;
+            return (barcode != null && !barcode.trim().isEmpty()) ? barcode.trim() : "";
         }
-        return null;
+        return "";
     }
 
     private String getName(FacebookItemDto item) {
@@ -509,13 +509,13 @@ public class FacebookMapper {
 
     private String getFieldValue(FacebookItemDto item, String fieldName) {
         if (item.getVariationInfo() == null || item.getVariationInfo().getFields() == null) {
-            return null;
+            return "";
         }
         return item.getVariationInfo().getFields().stream()
                 .filter(f -> fieldName.equals(f.getName()))
                 .map(FacebookItemDto.VariationField::getValue)
                 .findFirst()
-                .orElse(null);
+                .orElse("");
     }
 
     private int getWeight(FacebookItemDto item) {
@@ -539,7 +539,7 @@ public class FacebookMapper {
                 return images.get(0);
             }
         }
-        return null;
+        return "";
     }
 
     private int getImageCount(FacebookItemDto item) {
@@ -649,7 +649,7 @@ public class FacebookMapper {
                 return productDisplayId.trim();
             }
         }
-        return null;
+        return "";
     }
 
     private double calculatePlatformFee(FacebookOrderDto order) {

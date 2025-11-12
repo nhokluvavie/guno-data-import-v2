@@ -18,15 +18,15 @@ public class Customer {
     private String customerId;
     private Long customerKey;
     private String platformCustomerId;
-    private String phoneHash;
-    private String emailHash;
-    private String gender;
-    private String ageGroup;
-    private String customerSegment;
-    private String customerTier;
-    private String acquisitionChannel;
-    private LocalDateTime firstOrderDate;
-    private LocalDateTime lastOrderDate;
+    @Builder.Default private String phoneHash = "";
+    @Builder.Default private String emailHash = "";
+    @Builder.Default private String gender = "";
+    @Builder.Default private String ageGroup = "";
+    @Builder.Default private String customerSegment = "";
+    @Builder.Default private String customerTier = "";
+    @Builder.Default private String acquisitionChannel = "";
+    @Builder.Default private LocalDateTime firstOrderDate = LocalDateTime.now();
+    @Builder.Default private LocalDateTime lastOrderDate =  LocalDateTime.now();
 
     @Builder.Default private Integer totalOrders = 0;
     @Builder.Default private Double totalSpent = 0.0;
@@ -39,16 +39,16 @@ public class Customer {
     @Builder.Default private Double cancellationRate = 0.0;
     @Builder.Default private Double codPreferenceRate = 0.0;
 
-    private String favoriteCategory;
-    private String favoriteBrand;
-    private String preferredPaymentMethod;
-    private String preferredPlatform;
-    private String primaryShippingProvince;
+    @Builder.Default private String favoriteCategory = "";
+    @Builder.Default private String favoriteBrand = "";
+    @Builder.Default private String preferredPaymentMethod = "";
+    @Builder.Default private String preferredPlatform = "";
+    @Builder.Default private String primaryShippingProvince = "";
 
     @Builder.Default private Boolean shipsToMultipleProvinces = false;
     @Builder.Default private Integer loyaltyPoints = 0;
     @Builder.Default private Integer referralCount = 0;
     @Builder.Default private Boolean isReferrer = false;
 
-    private String customerName;
+    @Builder.Default private String customerName = "";
 }

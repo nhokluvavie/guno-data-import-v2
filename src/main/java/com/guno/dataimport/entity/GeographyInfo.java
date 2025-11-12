@@ -18,19 +18,19 @@ public class GeographyInfo {
     private Long geographyKey;
 
     // Location hierarchy
-    private String countryCode;
-    private String countryName;
-    private String regionCode;
-    private String regionName;
-    private String provinceCode;
-    private String provinceName;
-    private String provinceType;
-    private String districtCode;
-    private String districtName;
-    private String districtType;
-    private String wardCode;
-    private String wardName;
-    private String wardType;
+    @Builder.Default private String countryCode = "";
+    @Builder.Default private String countryName = "";
+    @Builder.Default private String regionCode = "";
+    @Builder.Default private String regionName = "";
+    @Builder.Default private String provinceCode = "";
+    @Builder.Default private String provinceName = "";
+    @Builder.Default private String provinceType = "";
+    @Builder.Default private String districtCode = "";
+    @Builder.Default private String districtName = "";
+    @Builder.Default private String districtType = "";
+    @Builder.Default private String wardCode = "";
+    @Builder.Default private String wardName = "";
+    @Builder.Default private String wardType = "";
 
     // Geographic characteristics
     @Builder.Default private Boolean isUrban = false;
@@ -38,13 +38,13 @@ public class GeographyInfo {
     @Builder.Default private Boolean isCoastal = false;
     @Builder.Default private Boolean isBorder = false;
 
-    private String economicTier;
-    private String populationDensity;
-    private String incomeLevel;
+    @Builder.Default private String economicTier = "";
+    @Builder.Default private String populationDensity = "";
+    @Builder.Default private String incomeLevel = "";
 
     // Shipping related
-    private String shippingZone;
-    private String deliveryComplexity;
+    @Builder.Default private String shippingZone = "";
+    @Builder.Default private String deliveryComplexity = "";
     @Builder.Default private Integer standardDeliveryDays = 0;
     @Builder.Default private Boolean expressDeliveryAvailable = false;
 

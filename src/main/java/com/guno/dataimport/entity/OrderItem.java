@@ -25,9 +25,9 @@ public class OrderItem {
     @Builder.Default private Double totalPrice = 0.0;
     @Builder.Default private Double itemDiscount = 0.0;
 
-    private String promotionType;
-    private String promotionCode;
-    private String itemStatus;
+    @Builder.Default private String promotionType = "";
+    @Builder.Default private String promotionCode = "";
+    @Builder.Default private String itemStatus = "";
 
     @Builder.Default private Integer itemSequence = 1;
     @Builder.Default private Long opId = 0L;

@@ -31,6 +31,17 @@ test:
   data:
     date: "2025-11-04"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
 
+# ================================
+# PLATFORM CONFIGURATION - NEW!
+# ================================
+platform:
+  facebook:
+    enabled: true
+  tiktok:
+    enabled: true
+  shopee:
+    enabled: true
+
 # Test API Configuration - Use unified date
 api:
   facebook:

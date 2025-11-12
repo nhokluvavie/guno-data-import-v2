@@ -34,6 +34,17 @@ management:
     health:
       show-details: when-authorized
 
+# ================================
+# PLATFORM CONFIGURATION - NEW!
+# ================================
+platform:
+  facebook:
+    enabled: ${FACEBOOK_ENABLED:true}
+  tiktok:
+    enabled: ${TIKTOK_ENABLED:true}
+  shopee:
+    enabled: ${SHOPEE_ENABLED:false}
+
 # API Configuration
 api:
   shopee:
@@ -103,7 +114,7 @@ processing:
     fallback-method: MULTI_VALUE
     copy-batch-size: 10000
 
-# Scheduler Configuration - FIXED: Every 5 minutes (production)
+# Scheduler Configuration
 scheduler:
   import:
     enabled: ${SCHEDULER_ENABLED:true}

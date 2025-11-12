@@ -68,7 +68,7 @@ api:
       Content-Type: application/json
       X-API-Key: ${TIKTOK_API_KEY:iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr}
     timeout-seconds: 600
-    page-size: 1500
+    page-size: 5000
     max-retries: 5
     retry-delay-ms: 2000
     default-date: ""
@@ -82,7 +82,7 @@ api:
       Content-Type: application/json
       X-API-Key: ${FACEBOOK_API_KEY:iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr}
     timeout-seconds: 600
-    page-size: 1000
+    page-size: 5000
     max-retries: 5
     retry-delay-ms: 2000
     default-date: ""

@@ -13,6 +13,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -36,6 +38,7 @@ public class ApiOrchestrator {
     private final BatchProcessor batchProcessor;
     private final BufferedDataCollector bufferedDataCollector;
     private final PlatformConfig platformConfig;
+    private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final ExecutorService executorService = Executors.newFixedThreadPool(3);
 
@@ -58,7 +61,7 @@ public class ApiOrchestrator {
     /**
      * MAIN METHOD: Process with batches and buffer optimization
      */
-    public ImportSummary processInBatches(int pageSize, boolean useBuffer, int bufferSize) {
+    public ImportSummary processInBatches(int pageSize, boolean useBuffer, int bufferSize, String date) {
         logPlatformStatus();
 
         if (!platformConfig.hasAnyPlatformEnabled()) {
@@ -70,8 +73,9 @@ public class ApiOrchestrator {
         }
 
         if (useBuffer) {
-            log.info("Using BUFFERED multi-platform processing - Buffer: {}, PageSize: {}", bufferSize, pageSize);
-            return bufferedDataCollector.collectWithBuffer(bufferSize, pageSize);
+            log.info("Using BUFFERED multi-platform processing - Date: {}, Buffer: {}, PageSize: {}",
+                    date, bufferSize, pageSize);
+            return bufferedDataCollector.collectMultiPlatformWithBuffer(date, bufferSize, pageSize);
         } else {
             log.info("Using STANDARD multi-platform processing - PageSize: {}", pageSize);
             return processPageByPage(pageSize);
@@ -84,7 +88,13 @@ public class ApiOrchestrator {
     public ImportSummary collectAndProcessInBatches() {
         log.info("🚀 Starting scheduled batch import");
         logPlatformStatus();
-        return processInBatches(100, true, 500);
+
+        // Get current date in GMT+7
+        String currentDate = LocalDate.now(VIETNAM_ZONE)
+                .toString();
+
+        log.info("📅 Collecting data for date: {} (GMT+7)", currentDate);
+        return processInBatches(100, true, 500, currentDate);
     }
 
     public ImportSummary processPageByPage(int pageSize) {

@@ -29,7 +29,7 @@ import java.util.List;
 public class BufferedDataCollector {
 
     private final FacebookApiClient facebookApiClient;
-    private final TikTokApiClient tikTokApiClient;  // ADD THIS
+    private final TikTokApiClient tikTokApiClient;
     private final BatchProcessor batchProcessor;
 
     /**

@@ -2,9 +2,9 @@ spring:
   application:
     name: guno-data-import
 
-  # Database Configuration - FIXED: Use production DB
+  # Production Database Configuration
   datasource:
-    url: jdbc:postgresql://${DB_HOST:103.97.125.92}:${DB_PORT:5432}/${DB_NAME:guno_db_test}?useSSL=false
+    url: jdbc:postgresql://${DB_HOST:160.25.81.22}:${DB_PORT:5432}/${DB_NAME:guno_db_test}?useSSL=false
     username: ${DB_USERNAME:guno_user}
     password: ${DB_PASSWORD:UYUgjL80moKrc6WTDLbg}
     driver-class-name: org.postgresql.Driver
@@ -22,20 +22,12 @@ spring:
 
   task:
     scheduling:
+      enabled: ${SCHEDULER_ENABLED:true}
       pool:
         size: 5
 
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info,metrics
-  endpoint:
-    health:
-      show-details: when-authorized
-
 # ================================
-# PLATFORM CONFIGURATION - NEW!
+# PLATFORM CONFIGURATION
 # ================================
 platform:
   facebook:
@@ -45,60 +37,58 @@ platform:
   shopee:
     enabled: ${SHOPEE_ENABLED:false}
 
-# API Configuration
+# ================================
+# API CONFIGURATION
+# ================================
 api:
-  shopee:
-    base-url: ${SHOPEE_API_URL:https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search}
+  facebook:
+    base-url: ${FACEBOOK_API_URL:https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search}
     headers:
       Authorization: x-webhook-api-key
-      Content-Type: application/json
-      X-API-Key: ${SHOPEE_API_KEY:iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr}
-    timeout-seconds: 600
-    page-size: 1500
-    max-retries: 5
-    retry-delay-ms: 2000
-    default-date: ""
-    source: "shopee"
+      X-API-Key: ${FACEBOOK_API_KEY}
+    timeout-seconds: 300
+    page-size: 3000
+    max-retries: 3
+    retry-delay-ms: 1000
+    source: "facebook"
     filter-date: "update"
 
   tiktok:
     base-url: ${TIKTOK_API_URL:https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search}
     headers:
       Authorization: x-webhook-api-key
-      Content-Type: application/json
-      X-API-Key: ${TIKTOK_API_KEY:iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr}
-    timeout-seconds: 600
+      X-API-Key: ${TIKTOK_API_KEY}
+    timeout-seconds: 300
     page-size: 5000
     max-retries: 5
-    retry-delay-ms: 2000
-    default-date: ""
+    retry-delay-ms: 1000
     source: "tiktok"
     filter-date: "update"
 
-  facebook:
-    base-url: ${FACEBOOK_API_URL:https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search}
+  shopee:
+    base-url: ${SHOPEE_API_URL:https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search}
     headers:
       Authorization: x-webhook-api-key
-      Content-Type: application/json
-      X-API-Key: ${FACEBOOK_API_KEY:iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr}
-    timeout-seconds: 600
+      X-API-Key: ${SHOPEE_API_KEY}
+    timeout-seconds: 300
     page-size: 5000
-    max-retries: 5
-    retry-delay-ms: 2000
-    default-date: ""
-    source: "facebook"
+    max-retries: 3
+    retry-delay-ms: 1000
+    source: "shopee"
     filter-date: "update"
 
   common:
     connect-timeout-ms: 10000
     read-timeout-ms: 30000
 
-# Processing Configuration
+# ================================
+# PROCESSING CONFIGURATION
+# ================================
 processing:
   parallel:
-    enabled: true
-    thread-pool-size: 5
-    timeout-minutes: 15
+    enabled: false
+    thread-pool-size: 10
+    timeout-minutes: 30
 
   batch:
     size: 1000
@@ -107,30 +97,61 @@ processing:
 
   validation:
     enabled: true
-    skip-invalid-records: true
+    skip-invalid-records: false
 
   bulk-insert:
     preferred-method: COPY_FROM
     fallback-method: MULTI_VALUE
     copy-batch-size: 10000
 
-# Scheduler Configuration
+# ================================
+# SCHEDULER CONFIGURATION
+# ================================
 scheduler:
   import:
     enabled: ${SCHEDULER_ENABLED:true}
     cron: ${SCHEDULER_CRON:0 */5 * * * *}
-    use-parallel: true
-    auto-start: false
+    use-parallel: false
+    auto-start: true
 
-# Logging Configuration
+# ================================
+# LOGGING CONFIGURATION
+# ================================
 logging:
   level:
-    root: INFO
     com.guno.dataimport: INFO
-    com.guno.dataimport.scheduler: INFO
-    com.guno.dataimport.api.client: INFO
-    com.guno.dataimport.processor: INFO
     org.springframework.jdbc: WARN
-    org.springframework.web: WARN
+    org.springframework.web.client: WARN
+    org.springframework.scheduling: INFO
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/guno-data-import.log
+
+# ================================
+# MANAGEMENT ENDPOINTS
+# ================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# ================================
+# SERVER CONFIGURATION
+# ================================
+server:
+  port: ${SERVER_PORT:8088}
+  compression:
+    enabled: true
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10

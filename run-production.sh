@@ -27,7 +27,7 @@ echo "✅ Found application jar: $JAR_FILE"
 
 # Set default JVM options if not provided
 if [ -z "$JAVA_OPTS" ]; then
-    JAVA_OPTS="-Xms5g -Xmx2g -XX:+UseG1GC"
+    JAVA_OPTS="-Xms2g -Xmx2g -XX:+UseG1GC"
 fi
 
 # Production JVM options

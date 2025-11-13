@@ -40,11 +40,11 @@ public class DataCollector {
     /**
      * FLEXIBLE: Custom collection strategy
      */
-    public ImportSummary collectAndProcess(int pageSize, boolean useBuffer, int bufferSize) {
-        log.info("Custom collection - PageSize: {}, Buffer: {}, Size: {}",
-                pageSize, useBuffer, bufferSize);
-        return apiOrchestrator.processInBatches(pageSize, useBuffer, bufferSize);
-    }
+//    public ImportSummary collectAndProcess(int pageSize, boolean useBuffer, int bufferSize) {
+//        log.info("Custom collection - PageSize: {}, Buffer: {}, Size: {}",
+//                pageSize, useBuffer, bufferSize);
+//        return apiOrchestrator.processInBatches(pageSize, useBuffer, bufferSize);
+//    }
 
     /**
      * Single page collection

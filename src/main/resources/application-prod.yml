@@ -22,7 +22,7 @@ spring:
 
   task:
     scheduling:
-      enabled: ${SCHEDULER_ENABLED:true}
+      enabled: true
       pool:
         size: 5
 
@@ -109,8 +109,8 @@ processing:
 # ================================
 scheduler:
   import:
-    enabled: ${SCHEDULER_ENABLED:true}
-    cron: ${SCHEDULER_CRON:0 */5 * * * *}
+    enabled: true
+    cron: 0 */5 * * * *
     use-parallel: false
     auto-start: true
 

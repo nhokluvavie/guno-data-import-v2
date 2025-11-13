@@ -143,7 +143,7 @@ public class BufferedDataCollector {
         try {
             // Collect Facebook data
             log.debug("Collecting Facebook data...");
-            FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders("", 1, 100);
+            FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders();
 
             if (facebookResponse != null && facebookResponse.getData() != null &&
                     facebookResponse.getData().getOrders() != null) {
@@ -159,7 +159,7 @@ public class BufferedDataCollector {
 
             // Collect TikTok data
             log.debug("Collecting TikTok data...");
-            FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders("", 1, 100);
+            FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders();
 
             if (tikTokResponse != null && tikTokResponse.getData() != null &&
                     tikTokResponse.getData().getOrders() != null) {

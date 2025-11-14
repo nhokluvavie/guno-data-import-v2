@@ -11,6 +11,7 @@ import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
 import com.guno.dataimport.processor.BatchProcessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -18,15 +19,6 @@ import java.time.ZoneId;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * ApiOrchestrator - PHASE 2: Platform enable/disable support
- *
- * UPDATES:
- * 1. ✅ Inject PlatformConfig
- * 2. ✅ Check platform enabled before collecting
- * 3. ✅ Fix collectAndProcessInBatches() method
- * 4. ✅ Log enabled platforms on startup
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -38,13 +30,15 @@ public class ApiOrchestrator {
     private final BatchProcessor batchProcessor;
     private final BufferedDataCollector bufferedDataCollector;
     private final PlatformConfig platformConfig;
+
+    @Value("${api.facebook.page-size:3000}")
+    private int facebookPageSize;
+
+    @Value("${api.tiktok.page-size:5000}")
+    private int tiktokPageSize;
+
     private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
-
     private final ExecutorService executorService = Executors.newFixedThreadPool(3);
-
-    // ================================
-    // PUBLIC API
-    // ================================
 
     public CollectedData collectData(boolean useBuffer, int bufferSize) {
         if (useBuffer) {
@@ -58,9 +52,6 @@ public class ApiOrchestrator {
         return collectData(false, 0);
     }
 
-    /**
-     * MAIN METHOD: Process with batches and buffer optimization
-     */
     public ImportSummary processInBatches(int pageSize, boolean useBuffer, int bufferSize, String date) {
         logPlatformStatus();
 
@@ -82,19 +73,21 @@ public class ApiOrchestrator {
         }
     }
 
-    /**
-     * FIXED: Default method for scheduler
-     */
     public ImportSummary collectAndProcessInBatches() {
         log.info("🚀 Starting scheduled batch import");
         logPlatformStatus();
 
-        // Get current date in GMT+7
-        String currentDate = LocalDate.now(VIETNAM_ZONE)
-                .toString();
+        String currentDate = LocalDate.now(VIETNAM_ZONE).toString();
 
         log.info("📅 Collecting data for date: {} (GMT+7)", currentDate);
-        return processInBatches(100, true, 500, currentDate);
+        log.info("📊 PageSize Config - Facebook: {}, TikTok: {}", facebookPageSize, tiktokPageSize);
+
+        return bufferedDataCollector.collectMultiPlatformWithBufferDynamic(
+                currentDate,
+                500,
+                facebookPageSize,
+                tiktokPageSize
+        );
     }
 
     public ImportSummary processPageByPage(int pageSize) {
@@ -123,10 +116,6 @@ public class ApiOrchestrator {
     public void collectAndProcessInBatchesLegacy() {
         processPageByPage(100);
     }
-
-    // ================================
-    // AVAILABILITY CHECKS
-    // ================================
 
     public boolean areApisAvailable() {
         logPlatformStatus();
@@ -176,13 +165,6 @@ public class ApiOrchestrator {
         executorService.shutdown();
     }
 
-    // ================================
-    // PRIVATE METHODS
-    // ================================
-
-    /**
-     * Collect single page from enabled platforms only
-     */
     private CollectedData collectSinglePage() {
         log.info("Collecting single page from enabled platforms");
         logPlatformStatus();
@@ -190,7 +172,6 @@ public class ApiOrchestrator {
         CollectedData data = new CollectedData();
 
         try {
-            // Facebook
             if (platformConfig.isFacebookEnabled()) {
                 log.info("📘 Collecting Facebook orders...");
                 FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders("", 1, 100);
@@ -206,7 +187,6 @@ public class ApiOrchestrator {
                 log.info("⏭️ Facebook collection skipped (disabled)");
             }
 
-            // TikTok
             if (platformConfig.isTikTokEnabled()) {
                 log.info("📗 Collecting TikTok orders...");
                 FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders("", 1, 100);
@@ -222,7 +202,6 @@ public class ApiOrchestrator {
                 log.info("⏭️ TikTok collection skipped (disabled)");
             }
 
-            // Shopee
             if (platformConfig.isShopeeEnabled()) {
                 log.info("📙 Collecting Shopee orders...");
                 FacebookApiResponse shopeeResponse = shopeeApiClient.fetchOrders("", 1, 100);
@@ -257,9 +236,6 @@ public class ApiOrchestrator {
         return bufferedDataCollector.collectMultiPlatformData(bufferSize);
     }
 
-    /**
-     * Log platform configuration status
-     */
     private void logPlatformStatus() {
         log.info("🔧 Platform Configuration: {}", platformConfig.getEnabledPlatforms());
         log.info("   - Facebook: {}", platformConfig.isFacebookEnabled() ? "✅ ENABLED" : "❌ DISABLED");

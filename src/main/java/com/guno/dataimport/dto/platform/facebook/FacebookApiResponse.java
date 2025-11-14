@@ -57,7 +57,7 @@ public class FacebookApiResponse {
 
     // Helper methods
     public boolean isSuccess() {
-        return status != null && status == 200;
+        return code != null && code == 200;
     }
 
     public int getOrderCount() {

@@ -65,7 +65,7 @@ public class Order {
     @Builder.Default private Double shippingCostRatio = 0.0;
 
     @Builder.Default private LocalDateTime createdAt = LocalDateTime.now();
-    @Builder.Default private Integer rawData = 0;
+    @Builder.Default private String orderSource = "UNKNOWN";
     @Builder.Default private Integer platformSpecificData = 0;
 
     // Seller fields

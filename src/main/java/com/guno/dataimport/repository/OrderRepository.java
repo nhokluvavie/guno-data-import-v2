@@ -48,7 +48,7 @@ public class OrderRepository {
         order_to_ship_hours, ship_to_delivery_hours, total_fulfillment_hours,
         customer_order_sequence, customer_lifetime_orders, customer_lifetime_value,
         days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
-        aov, shipping_cost_ratio, created_at, raw_data, platform_specific_data,
+        aov, shipping_cost_ratio, created_at, source, platform_specific_data,
         seller_id, seller_name, seller_email, latest_status, is_refunded, refund_amount,
         refund_date, is_exchanged, cancel_reason
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -84,7 +84,7 @@ public class OrderRepository {
         order_to_ship_hours, ship_to_delivery_hours, total_fulfillment_hours,
         customer_order_sequence, customer_lifetime_orders, customer_lifetime_value,
         days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
-        aov, shipping_cost_ratio, created_at, raw_data, platform_specific_data,
+        aov, shipping_cost_ratio, created_at, source, platform_specific_data,
         seller_id, seller_name, seller_email, latest_status, is_refunded, refund_amount,
         refund_date, is_exchanged, cancel_reason
     ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
@@ -199,7 +199,6 @@ public class OrderRepository {
 
     /**
      * UPDATED: Added 6 new fields to CSV generation
-     * FIXED: Handle NULL values for rawData and platformSpecificData
      */
     private String generateCsvData(List<Order> orders) {
         return orders.stream()
@@ -219,7 +218,7 @@ public class OrderRepository {
                         order.getCustomerLifetimeOrders(), order.getCustomerLifetimeValue(), order.getDaysSinceLastOrder(),
                         order.getPromotionImpact(), order.getAdRevenue(), order.getOrganicRevenue(), order.getAov(),
                         order.getShippingCostRatio(), CsvFormatter.formatDateTime(order.getCreatedAt()),
-                        order.getRawData() != null ? order.getRawData() : "",
+                        order.getOrderSource() != null ? order.getOrderSource() : "",
                         order.getPlatformSpecificData() != null ? order.getPlatformSpecificData() : "",
                         order.getSellerId(), order.getSellerName(), order.getSellerEmail(),
                         // NEW FIELDS:
@@ -259,7 +258,7 @@ public class OrderRepository {
                 o.getShipToDeliveryHours(), o.getTotalFulfillmentHours(), o.getCustomerOrderSequence(),
                 o.getCustomerLifetimeOrders(), o.getCustomerLifetimeValue(), o.getDaysSinceLastOrder(),
                 o.getPromotionImpact(), o.getAdRevenue(), o.getOrganicRevenue(), o.getAov(),
-                o.getShippingCostRatio(), o.getCreatedAt(), o.getRawData(), o.getPlatformSpecificData(),
+                o.getShippingCostRatio(), o.getCreatedAt(), o.getOrderSource(), o.getPlatformSpecificData(),
                 o.getSellerId(), o.getSellerName(), o.getSellerEmail(),
                 // NEW FIELDS:
                 o.getLatestStatus(), o.getIsRefunded(), o.getRefundAmount(),
@@ -316,7 +315,7 @@ public class OrderRepository {
                 .shippingCostRatio(rs.getDouble("shipping_cost_ratio"))
                 .createdAt(rs.getString("created_at") != null ?
                         LocalDateTime.parse(rs.getString("created_at")) : null)
-                .rawData(rs.getObject("raw_data") != null ? rs.getInt("raw_data") : null)
+                .orderSource(rs.getObject("order_source") != null ? rs.getString("order_source") : null)
                 .platformSpecificData(rs.getObject("platform_specific_data") != null ?
                         rs.getInt("platform_specific_data") : null)
                 .sellerId(rs.getString("seller_id"))

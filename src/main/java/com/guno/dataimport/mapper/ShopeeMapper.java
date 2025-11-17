@@ -142,7 +142,7 @@ public class ShopeeMapper {
                 .aov(safeDouble(order.getTotalPriceAfterSubDiscount()))
                 .shippingCostRatio(calculateShippingRatio(order))
                 .createdAt(order.getCreatedAt())
-                .rawData(0)
+                .orderSource("UNKNOWN")
                 .platformSpecificData(0)
                 .sellerId(extractSellerId(order))
                 .sellerName(extractSellerName(order))

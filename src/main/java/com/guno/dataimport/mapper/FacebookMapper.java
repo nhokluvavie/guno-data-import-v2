@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.WeekFields;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -145,11 +146,20 @@ public class FacebookMapper {
                 .aov(safeDouble(order.getTotalPriceAfterSubDiscount()))
                 .shippingCostRatio(calculateShippingRatio(order))
                 .createdAt(order.getCreatedAt())
-                .rawData(0)
+                .orderSource(extractSrouce(order))
                 .platformSpecificData(0)
                 .sellerId(extractSellerId(order))
                 .sellerName(extractSellerName(order))
                 .sellerEmail(extractSellerEmail(order))
+                .latestStatus(order.getStatus() != null ? order.getStatus().longValue() : null)
+                // ================================
+                // NEW FIELDS - Refund/Return/Exchange
+                // ================================
+                .isRefunded(order.isRefunded())
+                .refundAmount(order.getRefundAmount())
+                .refundDate(order.getRefundDate())
+                .isExchanged(order.isExchangeOrder())
+                .cancelReason("")
                 .build();
     }
 
@@ -401,7 +411,7 @@ public class FacebookMapper {
                 .dayOfWeekName(orderDate.getDayOfWeek().name())
                 .dayOfMonth(orderDate.getDayOfMonth())
                 .dayOfYear(orderDate.getDayOfYear())
-                .weekOfYear(orderDate.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear()))
+                .weekOfYear(orderDate.get(WeekFields.ISO.weekOfWeekBasedYear()))
                 .monthOfYear(orderDate.getMonthValue())
                 .monthName(orderDate.getMonth().name())
                 .quarterOfYear((orderDate.getMonthValue() - 1) / 3 + 1)
@@ -667,5 +677,18 @@ public class FacebookMapper {
         total += safeDouble(fees.getSellerTransactionFee());
 
         return total;
+    }
+
+    private String extractSrouce(FacebookOrderDto order) {
+        int selector = order.getData().isLivestream() ? 1 : 0;
+        return switch (selector) {
+            case 1 -> "Livestream";
+            case 0 -> {
+                if (order.getData().getAdId() != null) yield "Ads Mess";
+                if (order.getData().getCod() > 50000) yield "Organic";
+                yield "UNKNOWN";
+            }
+            default -> "ERROR";
+        };
     }
 }

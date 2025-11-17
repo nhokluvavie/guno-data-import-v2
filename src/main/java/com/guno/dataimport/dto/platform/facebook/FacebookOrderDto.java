@@ -102,7 +102,7 @@ public class FacebookOrderDto {
     }
 
     public String getPageId() {
-        return data != null && data.getPage() != null ? data.getPage().getId() : null;
+        return data != null && data.getPage() != null ? data.getPage().getName() : null;
     }
 
     public String getAccountName() {
@@ -289,6 +289,8 @@ public class FacebookOrderDto {
         private AdvancedPlatformFee advancedPlatformFee;
         @JsonProperty("returned_reason")
         private String returnedReason;
+        @JsonProperty("is_livestream")
+        private boolean isLivestream;
     }
 
     @Data

@@ -2,6 +2,7 @@ package com.guno.dataimport.buffer;
 
 import com.guno.dataimport.api.client.FacebookApiClient;
 import com.guno.dataimport.api.client.TikTokApiClient;
+import com.guno.dataimport.config.PlatformConfig;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ImportSummary;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
@@ -24,22 +25,13 @@ public class BufferedDataCollector {
     private final FacebookApiClient facebookApiClient;
     private final TikTokApiClient tikTokApiClient;
     private final BatchProcessor batchProcessor;
+    private final PlatformConfig platformConfig;
 
     public ImportSummary collectWithBuffer(String date, int bufferSize, int pageSize) {
         log.info("🚀 Starting Facebook buffered collection - Date: '{}', Buffer: {}, PageSize: {}",
                 date, bufferSize, pageSize);
 
         ImportSummary summary = ImportSummary.createWithDefaultTables();
-        if (summary == null) {
-            summary = ImportSummary.builder()
-                    .startTime(LocalDateTime.now())
-                    .status("FAILED")
-                    .errorMessage("Failed to create summary")
-                    .platformCounts(new HashMap<>())
-                    .tableInsertCounts(new HashMap<>())
-                    .build();
-        }
-
         List<Object> orderBuffer = new ArrayList<>(bufferSize);
         int currentPage = 1;
         int totalOrders = 0;
@@ -53,33 +45,25 @@ public class BufferedDataCollector {
                 FacebookApiResponse response = facebookApiClient.fetchOrders(date, currentPage, pageSize);
                 apiCalls++;
 
-                if (response == null) {
-                    log.warn("Facebook API call returned null response - Page: {}", currentPage);
+                if (response == null || response.getCode() != 200 ||
+                        response.getData() == null || response.getData().getOrders() == null) {
+                    log.warn("Facebook API unsuccessful - Page: {}", currentPage);
                     break;
                 }
 
-                if (response.getCode() == 200 && response.getData() != null &&
-                        response.getData().getOrders() != null) {
+                List<FacebookOrderDto> orders = response.getData().getOrders();
+                int ordersInPage = orders.size();
 
-                    List<FacebookOrderDto> orders = response.getData().getOrders();
-                    int ordersInPage = orders.size();
+                totalOrders += ordersInPage;
+                orderBuffer.addAll(orders.stream().map(order -> (Object) order).toList());
 
-                    totalOrders += ordersInPage;
-                    orderBuffer.addAll(orders.stream().map(order -> (Object) order).toList());
-
-                    if (orderBuffer.size() >= bufferSize) {
-                        flushBuffer(orderBuffer, summary);
-                        orderBuffer.clear();
-                    }
-
-                    hasMoreData = ordersInPage >= pageSize;
-                    currentPage++;
-
-                } else {
-                    log.warn("Facebook API unsuccessful or no data - Status: {}, Message: '{}'",
-                            response.getStatus(), response.getMessage());
-                    hasMoreData = false;
+                if (orderBuffer.size() >= bufferSize) {
+                    flushBuffer(orderBuffer, summary);
+                    orderBuffer.clear();
                 }
+
+                hasMoreData = ordersInPage >= pageSize;
+                currentPage++;
 
                 if (currentPage > 100) {
                     log.warn("Reached maximum page limit (100) for safety");
@@ -107,45 +91,48 @@ public class BufferedDataCollector {
         return summary;
     }
 
-    public ImportSummary collectWithBuffer(int bufferSize, int pageSize) {
-        log.warn("Using legacy collectWithBuffer without date - will use API default");
-        return collectWithBuffer("", bufferSize, pageSize);
-    }
-
     public CollectedData collectData() {
         log.info("Collecting single page data from all platforms (Facebook + TikTok)");
 
         CollectedData data = new CollectedData();
 
         try {
-            log.debug("Collecting Facebook data...");
-            FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders();
+            if (platformConfig.isFacebookEnabled()) {
+                log.debug("Collecting Facebook data...");
+                FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders();
 
-            if (facebookResponse != null && facebookResponse.getData() != null &&
-                    facebookResponse.getData().getOrders() != null) {
+                if (facebookResponse != null && facebookResponse.getData() != null &&
+                        facebookResponse.getData().getOrders() != null) {
 
-                data.setFacebookOrders(facebookResponse.getData().getOrders().stream()
-                        .map(order -> (Object) order)
-                        .toList());
+                    data.setFacebookOrders(facebookResponse.getData().getOrders().stream()
+                            .map(order -> (Object) order)
+                            .toList());
 
-                log.info("Collected {} Facebook orders", data.getFacebookOrders().size());
+                    log.info("Collected {} Facebook orders", data.getFacebookOrders().size());
+                } else {
+                    log.warn("No Facebook orders collected");
+                }
             } else {
-                log.warn("No Facebook orders collected");
+                log.info("⏭️ Facebook collection skipped (disabled)");
             }
 
-            log.debug("Collecting TikTok data...");
-            FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders();
+            if (platformConfig.isTikTokEnabled()) {
+                log.debug("Collecting TikTok data...");
+                FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders();
 
-            if (tikTokResponse != null && tikTokResponse.getData() != null &&
-                    tikTokResponse.getData().getOrders() != null) {
+                if (tikTokResponse != null && tikTokResponse.getData() != null &&
+                        tikTokResponse.getData().getOrders() != null) {
 
-                data.setTikTokOrders(tikTokResponse.getData().getOrders().stream()
-                        .map(order -> (Object) order)
-                        .toList());
+                    data.setTikTokOrders(tikTokResponse.getData().getOrders().stream()
+                            .map(order -> (Object) order)
+                            .toList());
 
-                log.info("Collected {} TikTok orders", data.getTikTokOrders().size());
+                    log.info("Collected {} TikTok orders", data.getTikTokOrders().size());
+                } else {
+                    log.warn("No TikTok orders collected");
+                }
             } else {
-                log.warn("No TikTok orders collected");
+                log.info("⏭️ TikTok collection skipped (disabled)");
             }
 
             log.info("Total collection: Facebook={}, TikTok={}, Total={}",
@@ -170,24 +157,23 @@ public class BufferedDataCollector {
                 date, bufferSize, pageSize);
 
         ImportSummary summary = ImportSummary.createWithDefaultTables();
-        if (summary == null) {
-            summary = ImportSummary.builder()
-                    .startTime(LocalDateTime.now())
-                    .status("FAILED")
-                    .errorMessage("Failed to create summary")
-                    .platformCounts(new HashMap<>())
-                    .tableInsertCounts(new HashMap<>())
-                    .build();
-        }
 
         try {
-            log.info("Collecting Facebook platform data...");
-            ImportSummary facebookSummary = collectPlatformData("FACEBOOK", date, bufferSize, pageSize);
-            summary.merge(facebookSummary);
+            if (platformConfig.isFacebookEnabled()) {
+                log.info("📘 Collecting Facebook platform data...");
+                ImportSummary facebookSummary = collectPlatformData("FACEBOOK", date, bufferSize, pageSize);
+                summary.merge(facebookSummary);
+            } else {
+                log.info("⏭️ Facebook collection skipped (disabled)");
+            }
 
-            log.info("Collecting TikTok platform data...");
-            ImportSummary tikTokSummary = collectPlatformData("TIKTOK", date, bufferSize, pageSize);
-            summary.merge(tikTokSummary);
+            if (platformConfig.isTikTokEnabled()) {
+                log.info("📗 Collecting TikTok platform data...");
+                ImportSummary tikTokSummary = collectPlatformData("TIKTOK", date, bufferSize, pageSize);
+                summary.merge(tikTokSummary);
+            } else {
+                log.info("⏭️ TikTok collection skipped (disabled)");
+            }
 
             summary.setEndTime(LocalDateTime.now());
             summary.setStatus("SUCCESS");
@@ -206,7 +192,7 @@ public class BufferedDataCollector {
     }
 
     public ImportSummary collectMultiPlatformWithBufferDynamic(
-            String date, int bufferSize, int facebookPageSize, int tiktokPageSize) {
+            String date, int bufferSize, int facebookPageSize, int tiktokPageSize, PlatformConfig config) {
 
         log.info("🚀 Starting multi-platform buffered collection - Date: '{}', Buffer: {}", date, bufferSize);
         log.info("   Facebook PageSize: {}, TikTok PageSize: {}", facebookPageSize, tiktokPageSize);
@@ -215,16 +201,24 @@ public class BufferedDataCollector {
         summary.setStartTime(LocalDateTime.now());
 
         try {
-            log.info("📘 Collecting Facebook platform data...");
-            ImportSummary fbSummary = collectPlatformData("FACEBOOK", date, bufferSize, facebookPageSize);
-            if (fbSummary != null) {
-                summary.merge(fbSummary);
+            if (config.isFacebookEnabled()) {
+                log.info("📘 Collecting Facebook platform data...");
+                ImportSummary fbSummary = collectPlatformData("FACEBOOK", date, bufferSize, facebookPageSize);
+                if (fbSummary != null) {
+                    summary.merge(fbSummary);
+                }
+            } else {
+                log.info("⏭️ Facebook collection DISABLED - skipped");
             }
 
-            log.info("📗 Collecting TikTok platform data...");
-            ImportSummary ttSummary = collectPlatformData("TIKTOK", date, bufferSize, tiktokPageSize);
-            if (ttSummary != null) {
-                summary.merge(ttSummary);
+            if (config.isTikTokEnabled()) {
+                log.info("📗 Collecting TikTok platform data...");
+                ImportSummary ttSummary = collectPlatformData("TIKTOK", date, bufferSize, tiktokPageSize);
+                if (ttSummary != null) {
+                    summary.merge(ttSummary);
+                }
+            } else {
+                log.info("⏭️ TikTok collection DISABLED - skipped");
             }
 
             summary.setEndTime(LocalDateTime.now());
@@ -266,17 +260,21 @@ public class BufferedDataCollector {
 
                 apiCalls++;
 
-                if (response == null || !response.isSuccess() ||
+                if (response == null || response.getCode() != 200 ||
                         response.getData() == null ||
                         response.getData().getOrders() == null) {
-                    log.warn("{} API unsuccessful - Page: {}", platform, currentPage);
+                    log.warn("{} API unsuccessful - Page: {}, Code: {}, Data: {}, Orders: {}",
+                            platform, currentPage,
+                            response != null ? response.getCode() : "null",
+                            response != null && response.getData() != null ? "exists" : "null",
+                            response != null && response.getData() != null && response.getData().getOrders() != null ? "exists" : "null");
                     break;
                 }
 
                 List<FacebookOrderDto> orders = response.getData().getOrders();
                 int ordersInPage = orders.size();
 
-                log.debug("Received {} {} orders on page {}", ordersInPage, platform, currentPage);
+                log.info("✅ Received {} {} orders on page {}", ordersInPage, platform, currentPage);
 
                 totalOrders += ordersInPage;
                 orderBuffer.addAll(orders.stream().map(order -> (Object) order).toList());

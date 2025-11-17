@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.HashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -77,16 +78,30 @@ public class ApiOrchestrator {
         log.info("🚀 Starting scheduled batch import");
         logPlatformStatus();
 
+        if (!platformConfig.hasAnyPlatformEnabled()) {
+            log.warn("⚠️ No platforms enabled - skipping scheduled import");
+            return ImportSummary.builder()
+                    .totalApiCalls(0)
+                    .totalDbOperations(0)
+                    .status("SKIPPED")
+                    .errorMessage("No platforms enabled")
+                    .platformCounts(new HashMap<>())
+                    .tableInsertCounts(new HashMap<>())
+                    .build();
+        }
+
         String currentDate = LocalDate.now(VIETNAM_ZONE).toString();
 
         log.info("📅 Collecting data for date: {} (GMT+7)", currentDate);
         log.info("📊 PageSize Config - Facebook: {}, TikTok: {}", facebookPageSize, tiktokPageSize);
+        log.info("🎯 Enabled platforms: {}", platformConfig.getEnabledPlatforms());
 
         return bufferedDataCollector.collectMultiPlatformWithBufferDynamic(
                 currentDate,
                 500,
                 facebookPageSize,
-                tiktokPageSize
+                tiktokPageSize,
+                platformConfig
         );
     }
 

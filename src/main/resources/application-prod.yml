@@ -47,7 +47,7 @@ api:
       Authorization: x-webhook-api-key
       X-API-Key: ${FACEBOOK_API_KEY}
     timeout-seconds: 300
-    page-size: 3000
+    page-size: 200
     max-retries: 3
     retry-delay-ms: 1000
     source: "facebook"

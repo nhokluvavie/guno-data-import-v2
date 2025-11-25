@@ -97,7 +97,23 @@ public class OrderRepository {
         if (orders == null || orders.isEmpty()) return 0;
         try {
             return tempTableUpsert(orders, "tbl_order",
-                    "order_id", "gross_revenue = EXCLUDED.gross_revenue, is_delivered = EXCLUDED.is_delivered, latest_status = EXCLUDED.latest_status, is_refunded = EXCLUDED.is_refunded");
+                    "order_id", "shop_id = EXCLUDED.shop_id,\n" +
+                            "        item_quantity = EXCLUDED.item_quantity,\n" +
+                            "        gross_revenue = EXCLUDED.gross_revenue,\n" +
+                            "        net_revenue = EXCLUDED.net_revenue,\n" +
+                            "        shipping_fee = EXCLUDED.shipping_fee,\n" +
+                            "        is_delivered = EXCLUDED.is_delivered,\n" +
+                            "        is_cancelled = EXCLUDED.is_cancelled,\n" +
+                            "        is_returned = EXCLUDED.is_returned,\n" +
+                            "        seller_id = EXCLUDED.seller_id,\n" +
+                            "        seller_name = EXCLUDED.seller_name,\n" +
+                            "        seller_email = EXCLUDED.seller_email,\n" +
+                            "        latest_status = EXCLUDED.latest_status,\n" +
+                            "        is_refunded = EXCLUDED.is_refunded,\n" +
+                            "        refund_amount = EXCLUDED.refund_amount,\n" +
+                            "        refund_date = EXCLUDED.refund_date,\n" +
+                            "        is_exchanged = EXCLUDED.is_exchanged,\n" +
+                            "        cancel_reason = EXCLUDED.cancel_reason");
         } catch (Exception e) {
             log.warn("Temp table failed, using batch: {}", e.getMessage());
             return executeBatchUpsert(orders);

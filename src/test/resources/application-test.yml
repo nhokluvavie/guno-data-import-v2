@@ -50,12 +50,12 @@ api:
       Authorization: x-webhook-api-key
       X-API-Key: iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr
     timeout-seconds: 300
-    page-size: 200
+    page-size: 1000
     max-retries: 3
     retry-delay-ms: 1000
     default-date: ${test.data.date}  # ✅ Use unified date
     source: "facebook"
-    filter-date: "update"
+    filter-date: "insert"
 
   tiktok:
     base-url: https://hub-bak.guno.store/api/v1/pos/pos-pancake-fm/order/search

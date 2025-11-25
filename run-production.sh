@@ -75,7 +75,7 @@ if health_check; then
     echo "📊 Health endpoint: http://localhost:${SERVER_PORT:-8088}/actuator/health"
     echo "📈 Metrics endpoint: http://localhost:${SERVER_PORT:-8088}/actuator/metrics"
     echo "📋 Logs: tail -f logs/guno-data-import.log"
-    echo "🔄 Scheduler will run every 2 hours automatically"
+    echo "🔄 Scheduler will run every 20 minute automatically"
 else
     echo "❌ Production deployment failed - check logs"
     exit 1

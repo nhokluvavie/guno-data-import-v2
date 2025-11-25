@@ -163,15 +163,6 @@ public class FacebookMapper {
                 .build();
     }
 
-    private boolean isOrderReturned(FacebookOrderDto order) {
-        if (order == null || order.getTrackingHistories() == null) {
-            return false;
-        }
-        return order.getTrackingHistories()
-                .stream()
-                .anyMatch(h -> "returned".equalsIgnoreCase(h.getPartnerStatus()));
-    }
-
     // ================================
     // ORDER ITEM MAPPING
     // ================================
@@ -441,9 +432,9 @@ public class FacebookMapper {
         if (order.getAssigningSeller() != null && order.getAssigningSeller().getName() != null) {
             return order.getAssigningSeller().getName();
         }
-        if (order.getAccountName() != null && !order.getAccountName().trim().isEmpty()) {
-            return order.getAccountName().trim();
-        }
+//        if (order.getAccountName() != null && !order.getAccountName().trim().isEmpty()) {
+//            return order.getAccountName().trim();
+//        }
         return "UNKNOWN";
     }
 

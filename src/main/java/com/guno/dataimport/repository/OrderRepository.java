@@ -55,6 +55,7 @@ public class OrderRepository {
     ON CONFLICT (order_id) DO UPDATE SET
         shop_id = EXCLUDED.shop_id,
         item_quantity = EXCLUDED.item_quantity,
+        total_items_in_order = EXCLUDED.total_items_in_order,
         gross_revenue = EXCLUDED.gross_revenue,
         net_revenue = EXCLUDED.net_revenue,
         shipping_fee = EXCLUDED.shipping_fee,
@@ -99,6 +100,7 @@ public class OrderRepository {
             return tempTableUpsert(orders, "tbl_order",
                     "order_id", "shop_id = EXCLUDED.shop_id,\n" +
                             "        item_quantity = EXCLUDED.item_quantity,\n" +
+                            "        total_items_in_order = EXCLUDED.total_items_in_order,\n" +
                             "        gross_revenue = EXCLUDED.gross_revenue,\n" +
                             "        net_revenue = EXCLUDED.net_revenue,\n" +
                             "        shipping_fee = EXCLUDED.shipping_fee,\n" +

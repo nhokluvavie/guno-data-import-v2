@@ -414,6 +414,7 @@ public class FacebookMapper {
                 .fiscalQuarter((orderDate.getMonthValue() - 1) / 3 + 1)
                 .isShoppingSeason(false)
                 .isPeakHour(isPeakHour(orderDate))
+                .hourOfDay(orderDate.getHour())
                 .build();
     }
 

@@ -45,4 +45,5 @@ public class ProcessingDateInfo {
     @Builder.Default private Boolean isShoppingSeason = false;
     private String seasonName;
     @Builder.Default private Boolean isPeakHour = false;
+    @Builder.Default private Integer hourOfDay = 0;
 }

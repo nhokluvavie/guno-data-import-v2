@@ -36,8 +36,8 @@ public class ProcessingDateRepository {
             order_id, date_key, full_date, day_of_week, day_of_week_name, day_of_month,
             day_of_year, week_of_year, month_of_year, month_name, quarter_of_year,
             quarter_name, year, is_weekend, is_holiday, holiday_name, is_business_day,
-            fiscal_year, fiscal_quarter, is_shopping_season, season_name, is_peak_hour
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            fiscal_year, fiscal_quarter, is_shopping_season, season_name, is_peak_hour, hour_of_day
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (order_id) DO UPDATE SET
             full_date = EXCLUDED.full_date,
             day_of_week = EXCLUDED.day_of_week,
@@ -53,7 +53,7 @@ public class ProcessingDateRepository {
             order_id, date_key, full_date, day_of_week, day_of_week_name, day_of_month,
             day_of_year, week_of_year, month_of_year, month_name, quarter_of_year,
             quarter_name, year, is_weekend, is_holiday, holiday_name, is_business_day,
-            fiscal_year, fiscal_quarter, is_shopping_season, season_name, is_peak_hour
+            fiscal_year, fiscal_quarter, is_shopping_season, season_name, is_peak_hour, hour_of_day
         ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
         """;
 
@@ -64,7 +64,7 @@ public class ProcessingDateRepository {
         if (dateInfos == null || dateInfos.isEmpty()) return 0;
         try {
             return tempTableUpsert(dateInfos, "tbl_processing_date_info",
-                    "order_id", "full_date = EXCLUDED.full_date, is_weekend = EXCLUDED.is_weekend");
+                    "order_id", "full_date = EXCLUDED.full_date, is_weekend = EXCLUDED.is_weekend, hour_of_day = EXCLUDED.hour_of_day");
         } catch (Exception e) {
             log.warn("Temp table failed, using batch: {}", e.getMessage());
             return executeBatchUpsert(dateInfos);
@@ -168,7 +168,8 @@ public class ProcessingDateRepository {
                         CsvFormatter.formatBoolean(dateInfo.getIsHoliday()), dateInfo.getHolidayName(),
                         CsvFormatter.formatBoolean(dateInfo.getIsBusinessDay()), dateInfo.getFiscalYear(),
                         dateInfo.getFiscalQuarter(), CsvFormatter.formatBoolean(dateInfo.getIsShoppingSeason()),
-                        dateInfo.getSeasonName(), CsvFormatter.formatBoolean(dateInfo.getIsPeakHour())
+                        dateInfo.getSeasonName(), CsvFormatter.formatBoolean(dateInfo.getIsPeakHour()),
+                        dateInfo.getHourOfDay()
                 ))
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
@@ -185,7 +186,7 @@ public class ProcessingDateRepository {
                 d.getDayOfMonth(), d.getDayOfYear(), d.getWeekOfYear(), d.getMonthOfYear(),
                 d.getMonthName(), d.getQuarterOfYear(), d.getQuarterName(), d.getYear(),
                 d.getIsWeekend(), d.getIsHoliday(), d.getHolidayName(), d.getIsBusinessDay(),
-                d.getFiscalYear(), d.getFiscalQuarter(), d.getIsShoppingSeason(), d.getSeasonName(), d.getIsPeakHour()
+                d.getFiscalYear(), d.getFiscalQuarter(), d.getIsShoppingSeason(), d.getSeasonName(), d.getIsPeakHour(), d.getHourOfDay()
         };
     }
 
@@ -215,6 +216,7 @@ public class ProcessingDateRepository {
                 .isShoppingSeason(rs.getBoolean("is_shopping_season"))
                 .seasonName(rs.getString("season_name"))
                 .isPeakHour(rs.getBoolean("is_peak_hour"))
+                .hourOfDay(rs.getInt("hour_of_day"))
                 .build();
     }
 }

@@ -66,7 +66,7 @@ nohup java $JAVA_OPTS -jar $JAR_FILE > logs/application.out 2>&1 &
 APP_PID=$!
 
 echo "✅ Application started with PID: $APP_PID"
-echo $APP_PID > logs/app.pid
+echo $APP_PID > app.pid
 
 # Wait for startup and health check
 sleep 10

@@ -8,6 +8,7 @@ import com.guno.dataimport.config.PlatformConfig;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ImportSummary;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
+import com.guno.dataimport.dto.platform.tiktok.TikTokApiResponse;
 import com.guno.dataimport.processor.BatchProcessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -204,7 +205,7 @@ public class ApiOrchestrator {
 
             if (platformConfig.isTikTokEnabled()) {
                 log.info("📗 Collecting TikTok orders...");
-                FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders("", 1, 100);
+                TikTokApiResponse tikTokResponse = tikTokApiClient.fetchOrders("", 1, 100);
                 if (tikTokResponse.getData() != null && tikTokResponse.getData().getOrders() != null) {
                     data.setTikTokOrders(tikTokResponse.getData().getOrders().stream()
                             .map(order -> (Object) order)

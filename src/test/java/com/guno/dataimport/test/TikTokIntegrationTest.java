@@ -6,7 +6,7 @@ import com.guno.dataimport.api.client.ShopeeApiClient;
 import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ProcessingResult;
-import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
+import com.guno.dataimport.dto.platform.tiktok.TikTokApiResponse;
 import com.guno.dataimport.processor.BatchProcessor;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
@@ -26,11 +26,8 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * TikTok Integration Test - FIXED VERSION
- *
- * FIXES:
- * - Mock FacebookApiClient và ShopeeApiClient để chỉ test TikTok API
- * - Ngăn chặn việc gọi không cần thiết đến các API khác
+ * TikTok Integration Test - UPDATED VERSION
+ * Uses TikTokApiResponse instead of FacebookApiResponse
  */
 @SpringBootTest(classes = DataImportApplication.class)
 @ActiveProfiles("test")
@@ -82,7 +79,8 @@ class TikTokIntegrationTest {
             while (hasMoreData) {
                 log.info("   📡 Calling TikTok API - Page: {}, PageSize: {}", currentPage, pageSize);
 
-                FacebookApiResponse response = tikTokApiClient.fetchOrders(testDate, currentPage, pageSize);
+                // UPDATED: Use TikTokApiResponse instead of FacebookApiResponse
+                TikTokApiResponse response = tikTokApiClient.fetchOrders(testDate, currentPage, pageSize);
                 totalApiCalls++;
 
                 if (response == null || response.getCode() != 200) {
@@ -91,13 +89,13 @@ class TikTokIntegrationTest {
                     break;
                 }
 
-                if (response.getData() == null || response.getData().getOrders() == null
-                        || response.getData().getOrders().isEmpty()) {
+                // UPDATED: Use TikTokApiResponse methods
+                if (!response.hasOrders()) {
                     log.info("   ✅ No more data at page {} - Stopping pagination", currentPage);
                     hasMoreData = false;
                 } else {
-                    int pageOrderCount = response.getData().getOrders().size();
-                    allOrders.addAll(response.getData().getOrders());
+                    int pageOrderCount = response.getOrderCount();
+                    allOrders.addAll(response.getOrders());
                     log.info("   📦 Page {} collected: {} orders (Total: {})",
                             currentPage, pageOrderCount, allOrders.size());
 
@@ -157,8 +155,8 @@ class TikTokIntegrationTest {
             log.info("=".repeat(60));
 
             // Verify mocks were not called
-            verify(facebookApiClient, atMost(1)).isApiAvailable(); // Only in system readiness check
-            verify(shopeeApiClient, atMost(1)).isApiAvailable(); // Only in system readiness check
+            verify(facebookApiClient, atMost(1)).isApiAvailable();
+            verify(shopeeApiClient, atMost(1)).isApiAvailable();
             verify(facebookApiClient, never()).fetchOrders(anyString(), anyInt(), anyInt());
             verify(shopeeApiClient, never()).fetchOrders(anyString(), anyInt(), anyInt());
 

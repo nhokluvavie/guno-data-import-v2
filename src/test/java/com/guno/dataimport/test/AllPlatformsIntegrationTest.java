@@ -7,6 +7,7 @@ import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ProcessingResult;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
+import com.guno.dataimport.dto.platform.tiktok.TikTokApiResponse;
 import com.guno.dataimport.processor.BatchProcessor;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
@@ -147,7 +148,7 @@ class AllPlatformsIntegrationTest {
             while (hasMoreData) {
                 log.info("   📡 TikTok API - Page: {}", currentPage);
 
-                FacebookApiResponse response = tikTokApiClient.fetchOrders(tiktokDate, currentPage, tiktokPageSize);
+                TikTokApiResponse response = tikTokApiClient.fetchOrders(tiktokDate, currentPage, tiktokPageSize);
                 data.apiCalls++;
 
                 if (response == null || response.getCode() != 200) {

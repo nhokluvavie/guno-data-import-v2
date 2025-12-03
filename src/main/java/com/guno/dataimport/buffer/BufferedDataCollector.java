@@ -1,12 +1,15 @@
 package com.guno.dataimport.buffer;
 
 import com.guno.dataimport.api.client.FacebookApiClient;
+import com.guno.dataimport.api.client.ShopeeApiClient;
 import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.config.PlatformConfig;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ImportSummary;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
+import com.guno.dataimport.dto.platform.tiktok.TikTokApiResponse;
+import com.guno.dataimport.dto.platform.tiktok.TikTokOrderDto;
 import com.guno.dataimport.processor.BatchProcessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,7 +17,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 
 @Service
@@ -24,10 +26,15 @@ public class BufferedDataCollector {
 
     private final FacebookApiClient facebookApiClient;
     private final TikTokApiClient tikTokApiClient;
+    private final ShopeeApiClient shopeeApiClient;
     private final BatchProcessor batchProcessor;
     private final PlatformConfig platformConfig;
 
-    public ImportSummary collectWithBuffer(String date, int bufferSize, int pageSize) {
+    // ================================
+    // FACEBOOK BUFFERED COLLECTION
+    // ================================
+
+    public ImportSummary collectFacebookWithBuffer(String date, int bufferSize, int pageSize) {
         log.info("🚀 Starting Facebook buffered collection - Date: '{}', Buffer: {}, PageSize: {}",
                 date, bufferSize, pageSize);
 
@@ -52,197 +59,59 @@ public class BufferedDataCollector {
                 }
 
                 List<FacebookOrderDto> orders = response.getData().getOrders();
-                int ordersInPage = orders.size();
 
-                totalOrders += ordersInPage;
-                orderBuffer.addAll(orders.stream().map(order -> (Object) order).toList());
+                if (orders.isEmpty()) {
+                    log.info("✅ No more Facebook orders at page {}", currentPage);
+                    break;
+                }
 
+                orderBuffer.addAll(orders);
+                totalOrders += orders.size();
+                log.info("📦 Facebook Page {} collected: {} orders (Buffer: {}/{})",
+                        currentPage, orders.size(), orderBuffer.size(), bufferSize);
+
+                // Process buffer when full
                 if (orderBuffer.size() >= bufferSize) {
-                    flushBuffer(orderBuffer, summary);
+                    processBuffer(orderBuffer, "FACEBOOK", summary);
                     orderBuffer.clear();
                 }
 
-                hasMoreData = ordersInPage >= pageSize;
+                // Check if last page
+                if (orders.size() < pageSize) {
+                    log.info("✅ Facebook last page reached");
+                    hasMoreData = false;
+                }
+
                 currentPage++;
-
-                if (currentPage > 100) {
-                    log.warn("Reached maximum page limit (100) for safety");
-                    break;
-                }
             }
 
+            // Process remaining orders in buffer
             if (!orderBuffer.isEmpty()) {
-                flushBuffer(orderBuffer, summary);
+                log.info("📦 Processing remaining {} Facebook orders", orderBuffer.size());
+                processBuffer(orderBuffer, "FACEBOOK", summary);
             }
 
-            summary.setTotalApiCalls(apiCalls);
-            summary.addPlatformCount("FACEBOOK", totalOrders);
-            summary.setEndTime(LocalDateTime.now());
-            summary.setStatus("SUCCESS");
-
-            log.info("✅ Facebook buffered collection completed - {} orders, {} API calls, Duration: {}",
-                    totalOrders, apiCalls, summary.getDurationFormatted());
+            log.info("✅ Facebook collection completed - Total: {}, API Calls: {}", totalOrders, apiCalls);
+            return summary;
 
         } catch (Exception e) {
-            log.error("❌ Facebook buffered collection failed: {}", e.getMessage(), e);
-            summary.markFailed(e.getMessage());
+            log.error("❌ Facebook buffered collection error", e);
+            summary.setErrorMessage("Facebook collection failed: " + e.getMessage());
+            summary.setStatus("FAILED");
+            return summary;
         }
-
-        return summary;
     }
 
-    public CollectedData collectData() {
-        log.info("Collecting single page data from all platforms (Facebook + TikTok)");
+    // ================================
+    // TIKTOK BUFFERED COLLECTION
+    // ================================
 
-        CollectedData data = new CollectedData();
-
-        try {
-            if (platformConfig.isFacebookEnabled()) {
-                log.debug("Collecting Facebook data...");
-                FacebookApiResponse facebookResponse = facebookApiClient.fetchOrders();
-
-                if (facebookResponse != null && facebookResponse.getData() != null &&
-                        facebookResponse.getData().getOrders() != null) {
-
-                    data.setFacebookOrders(facebookResponse.getData().getOrders().stream()
-                            .map(order -> (Object) order)
-                            .toList());
-
-                    log.info("Collected {} Facebook orders", data.getFacebookOrders().size());
-                } else {
-                    log.warn("No Facebook orders collected");
-                }
-            } else {
-                log.info("⏭️ Facebook collection skipped (disabled)");
-            }
-
-            if (platformConfig.isTikTokEnabled()) {
-                log.debug("Collecting TikTok data...");
-                FacebookApiResponse tikTokResponse = tikTokApiClient.fetchOrders();
-
-                if (tikTokResponse != null && tikTokResponse.getData() != null &&
-                        tikTokResponse.getData().getOrders() != null) {
-
-                    data.setTikTokOrders(tikTokResponse.getData().getOrders().stream()
-                            .map(order -> (Object) order)
-                            .toList());
-
-                    log.info("Collected {} TikTok orders", data.getTikTokOrders().size());
-                } else {
-                    log.warn("No TikTok orders collected");
-                }
-            } else {
-                log.info("⏭️ TikTok collection skipped (disabled)");
-            }
-
-            log.info("Total collection: Facebook={}, TikTok={}, Total={}",
-                    data.getFacebookOrders().size(),
-                    data.getTikTokOrders().size(),
-                    data.getTotalOrders());
-
-        } catch (Exception e) {
-            log.error("Multi-platform data collection failed: {}", e.getMessage(), e);
-        }
-
-        return data;
-    }
-
-    public CollectedData collectMultiPlatformData(int bufferSize) {
-        log.info("Collecting multi-platform data with buffer optimization - BufferSize: {}", bufferSize);
-        return collectData();
-    }
-
-    public ImportSummary collectMultiPlatformWithBuffer(String date, int bufferSize, int pageSize) {
-        log.info("🚀 Starting multi-platform buffered collection - Date: '{}', Buffer: {}, PageSize: {}",
+    public ImportSummary collectTikTokWithBuffer(String date, int bufferSize, int pageSize) {
+        log.info("🚀 Starting TikTok buffered collection - Date: '{}', Buffer: {}, PageSize: {}",
                 date, bufferSize, pageSize);
 
         ImportSummary summary = ImportSummary.createWithDefaultTables();
-
-        try {
-            if (platformConfig.isFacebookEnabled()) {
-                log.info("📘 Collecting Facebook platform data...");
-                ImportSummary facebookSummary = collectPlatformData("FACEBOOK", date, bufferSize, pageSize);
-                summary.merge(facebookSummary);
-            } else {
-                log.info("⏭️ Facebook collection skipped (disabled)");
-            }
-
-            if (platformConfig.isTikTokEnabled()) {
-                log.info("📗 Collecting TikTok platform data...");
-                ImportSummary tikTokSummary = collectPlatformData("TIKTOK", date, bufferSize, pageSize);
-                summary.merge(tikTokSummary);
-            } else {
-                log.info("⏭️ TikTok collection skipped (disabled)");
-            }
-
-            summary.setEndTime(LocalDateTime.now());
-            summary.setStatus("SUCCESS");
-
-            log.info("✅ Multi-platform collection completed - Facebook: {}, TikTok: {}, Total Duration: {}",
-                    summary.getPlatformCount("FACEBOOK"),
-                    summary.getPlatformCount("TIKTOK"),
-                    summary.getDurationFormatted());
-
-        } catch (Exception e) {
-            log.error("❌ Multi-platform collection failed: {}", e.getMessage(), e);
-            summary.markFailed(e.getMessage());
-        }
-
-        return summary;
-    }
-
-    public ImportSummary collectMultiPlatformWithBufferDynamic(
-            String date, int bufferSize, int facebookPageSize, int tiktokPageSize, PlatformConfig config) {
-
-        log.info("🚀 Starting multi-platform buffered collection - Date: '{}', Buffer: {}", date, bufferSize);
-        log.info("   Facebook PageSize: {}, TikTok PageSize: {}", facebookPageSize, tiktokPageSize);
-
-        ImportSummary summary = ImportSummary.createWithDefaultTables();
-        summary.setStartTime(LocalDateTime.now());
-
-        try {
-            if (config.isFacebookEnabled()) {
-                log.info("📘 Collecting Facebook platform data...");
-                ImportSummary fbSummary = collectPlatformData("FACEBOOK", date, bufferSize, facebookPageSize);
-                if (fbSummary != null) {
-                    summary.merge(fbSummary);
-                }
-            } else {
-                log.info("⏭️ Facebook collection DISABLED - skipped");
-            }
-
-            if (config.isTikTokEnabled()) {
-                log.info("📗 Collecting TikTok platform data...");
-                ImportSummary ttSummary = collectPlatformData("TIKTOK", date, bufferSize, tiktokPageSize);
-                if (ttSummary != null) {
-                    summary.merge(ttSummary);
-                }
-            } else {
-                log.info("⏭️ TikTok collection DISABLED - skipped");
-            }
-
-            summary.setEndTime(LocalDateTime.now());
-            summary.setStatus("SUCCESS");
-
-            log.info("✅ Multi-platform collection completed - Facebook: {}, TikTok: {}, Total Duration: {}",
-                    summary.getPlatformCount("FACEBOOK"),
-                    summary.getPlatformCount("TIKTOK"),
-                    summary.getDurationFormatted());
-
-        } catch (Exception e) {
-            log.error("❌ Multi-platform collection failed: {}", e.getMessage(), e);
-            summary.markFailed(e.getMessage());
-        }
-
-        return summary;
-    }
-
-    private ImportSummary collectPlatformData(String platform, String date, int bufferSize, int pageSize) {
-        log.info("Collecting {} platform data...", platform);
-
-        ImportSummary platformSummary = ImportSummary.createWithDefaultTables();
         List<Object> orderBuffer = new ArrayList<>(bufferSize);
-
         int currentPage = 1;
         int totalOrders = 0;
         int apiCalls = 0;
@@ -250,132 +119,308 @@ public class BufferedDataCollector {
 
         try {
             while (hasMoreData) {
-                FacebookApiResponse response = null;
+                log.debug("🔄 Calling TikTok API - Page: {}, Date: '{}'", currentPage, date);
 
-                if ("FACEBOOK".equals(platform)) {
-                    response = facebookApiClient.fetchOrders(date, currentPage, pageSize);
-                } else if ("TIKTOK".equals(platform)) {
-                    response = tikTokApiClient.fetchOrders(date, currentPage, pageSize);
+                // FIXED: Use TikTokApiResponse
+                TikTokApiResponse response = tikTokApiClient.fetchOrders(date, currentPage, pageSize);
+                apiCalls++;
+
+                if (response == null || response.getCode() != 200) {
+                    log.warn("TikTok API unsuccessful - Page: {}", currentPage);
+                    break;
                 }
 
+                // FIXED: TikTok response structure - getOrders() directly
+                List<TikTokOrderDto> orders = response.getOrders();
+
+                if (orders.isEmpty()) {
+                    log.info("✅ No more TikTok orders at page {}", currentPage);
+                    break;
+                }
+
+                orderBuffer.addAll(orders);
+                totalOrders += orders.size();
+                log.info("📦 TikTok Page {} collected: {} orders (Buffer: {}/{})",
+                        currentPage, orders.size(), orderBuffer.size(), bufferSize);
+
+                // Process buffer when full
+                if (orderBuffer.size() >= bufferSize) {
+                    processBuffer(orderBuffer, "TIKTOK", summary);
+                    orderBuffer.clear();
+                }
+
+                // Check if last page
+                if (orders.size() < pageSize) {
+                    log.info("✅ TikTok last page reached");
+                    hasMoreData = false;
+                }
+
+                currentPage++;
+            }
+
+            // Process remaining orders in buffer
+            if (!orderBuffer.isEmpty()) {
+                log.info("📦 Processing remaining {} TikTok orders", orderBuffer.size());
+                processBuffer(orderBuffer, "TIKTOK", summary);
+            }
+
+            log.info("✅ TikTok collection completed - Total: {}, API Calls: {}", totalOrders, apiCalls);
+            return summary;
+
+        } catch (Exception e) {
+            log.error("❌ TikTok buffered collection error", e);
+            summary.setErrorMessage("TikTok collection failed: " + e.getMessage());
+            summary.setStatus("FAILED");
+            return summary;
+        }
+    }
+
+    // ================================
+    // SHOPEE BUFFERED COLLECTION
+    // ================================
+
+    public ImportSummary collectShopeeWithBuffer(String date, int bufferSize, int pageSize) {
+        log.info("🚀 Starting Shopee buffered collection - Date: '{}', Buffer: {}, PageSize: {}",
+                date, bufferSize, pageSize);
+
+        ImportSummary summary = ImportSummary.createWithDefaultTables();
+        List<Object> orderBuffer = new ArrayList<>(bufferSize);
+        int currentPage = 1;
+        int totalOrders = 0;
+        int apiCalls = 0;
+        boolean hasMoreData = true;
+
+        try {
+            while (hasMoreData) {
+                log.debug("🔄 Calling Shopee API - Page: {}, Date: '{}'", currentPage, date);
+
+                // Shopee uses FacebookApiResponse (same structure)
+                FacebookApiResponse response = shopeeApiClient.fetchOrders(date, currentPage, pageSize);
                 apiCalls++;
 
                 if (response == null || response.getCode() != 200 ||
-                        response.getData() == null ||
-                        response.getData().getOrders() == null) {
-                    log.warn("{} API unsuccessful - Page: {}, Code: {}, Data: {}, Orders: {}",
-                            platform, currentPage,
-                            response != null ? response.getCode() : "null",
-                            response != null && response.getData() != null ? "exists" : "null",
-                            response != null && response.getData() != null && response.getData().getOrders() != null ? "exists" : "null");
+                        response.getData() == null || response.getData().getOrders() == null) {
+                    log.warn("Shopee API unsuccessful - Page: {}", currentPage);
                     break;
                 }
 
                 List<FacebookOrderDto> orders = response.getData().getOrders();
-                int ordersInPage = orders.size();
 
-                log.info("✅ Received {} {} orders on page {}", ordersInPage, platform, currentPage);
+                if (orders.isEmpty()) {
+                    log.info("✅ No more Shopee orders at page {}", currentPage);
+                    break;
+                }
 
-                totalOrders += ordersInPage;
-                orderBuffer.addAll(orders.stream().map(order -> (Object) order).toList());
+                orderBuffer.addAll(orders);
+                totalOrders += orders.size();
+                log.info("📦 Shopee Page {} collected: {} orders (Buffer: {}/{})",
+                        currentPage, orders.size(), orderBuffer.size(), bufferSize);
 
+                // Process buffer when full
                 if (orderBuffer.size() >= bufferSize) {
-                    log.info("🔄 Flushing {} {} orders to database", orderBuffer.size(), platform);
-                    flushPlatformBuffer(orderBuffer, platform, platformSummary);
+                    processBuffer(orderBuffer, "SHOPEE", summary);
                     orderBuffer.clear();
                 }
 
-                hasMoreData = ordersInPage >= pageSize;
-                currentPage++;
-
-                if (currentPage > 50) {
-                    log.warn("Reached platform page limit (50) for {}", platform);
-                    break;
+                // Check if last page
+                if (orders.size() < pageSize) {
+                    log.info("✅ Shopee last page reached");
+                    hasMoreData = false;
                 }
+
+                currentPage++;
             }
 
+            // Process remaining orders in buffer
             if (!orderBuffer.isEmpty()) {
-                log.info("🔄 Flushing remaining {} {} orders", orderBuffer.size(), platform);
-                flushPlatformBuffer(orderBuffer, platform, platformSummary);
+                log.info("📦 Processing remaining {} Shopee orders", orderBuffer.size());
+                processBuffer(orderBuffer, "SHOPEE", summary);
             }
 
-            platformSummary.setTotalApiCalls(apiCalls);
-            platformSummary.addPlatformCount(platform, totalOrders);
-
-            log.info("✅ {} collection completed - {} orders, {} API calls",
-                    platform, totalOrders, apiCalls);
+            log.info("✅ Shopee collection completed - Total: {}, API Calls: {}", totalOrders, apiCalls);
+            return summary;
 
         } catch (Exception e) {
-            log.error("❌ {} collection failed: {}", platform, e.getMessage(), e);
-            platformSummary.markFailed(e.getMessage());
-        }
-
-        return platformSummary;
-    }
-
-    private void flushBuffer(List<Object> orderBuffer, ImportSummary summary) {
-        if (orderBuffer.isEmpty()) return;
-
-        log.debug("🔄 Flushing {} Facebook orders to database", orderBuffer.size());
-
-        try {
-            var result = batchProcessor.processFacebookOrders(orderBuffer);
-
-            int orderCount = orderBuffer.size();
-            summary.addTableInsertCount("customers", orderCount);
-            summary.addTableInsertCount("orders", orderCount);
-            summary.addTableInsertCount("order_items", orderCount * 2);
-            summary.addTableInsertCount("products", orderCount);
-            summary.addTableInsertCount("geography_info", orderCount);
-            summary.addTableInsertCount("payment_info", orderCount);
-            summary.addTableInsertCount("shipping_info", orderCount);
-            summary.addTableInsertCount("order_status", orderCount);
-            summary.addTableInsertCount("order_status_detail", orderCount);
-            summary.addTableInsertCount("processing_date_info", 1);
-
-            summary.setTotalDbOperations(summary.getTotalDbOperations() + 11);
-
-        } catch (Exception e) {
-            log.error("Failed to flush Facebook buffer: {}", e.getMessage(), e);
-            throw new RuntimeException("Buffer flush failed", e);
+            log.error("❌ Shopee buffered collection error", e);
+            summary.setErrorMessage("Shopee collection failed: " + e.getMessage());
+            summary.setStatus("FAILED");
+            return summary;
         }
     }
 
-    private void flushPlatformBuffer(List<Object> orderBuffer, String platform, ImportSummary summary) {
-        if (orderBuffer.isEmpty()) return;
+    // ================================
+    // UNIFIED COLLECTION METHOD
+    // ================================
+
+    /**
+     * Unified collection with same page size for all platforms
+     */
+    public ImportSummary collectWithBuffer(String date, int bufferSize, int pageSize) {
+        log.info("🚀 Starting unified buffered collection for all platforms");
+
+        ImportSummary globalSummary = ImportSummary.createWithDefaultTables();
+
+        // Collect Facebook
+        if (platformConfig.isFacebookEnabled()) {
+            ImportSummary fbSummary = collectFacebookWithBuffer(date, bufferSize, pageSize);
+            mergeSummaries(globalSummary, fbSummary);
+        }
+
+        // Collect TikTok
+        if (platformConfig.isTikTokEnabled()) {
+            ImportSummary ttSummary = collectTikTokWithBuffer(date, bufferSize, pageSize);
+            mergeSummaries(globalSummary, ttSummary);
+        }
+
+        // Collect Shopee
+        if (platformConfig.isShopeeEnabled()) {
+            ImportSummary spSummary = collectShopeeWithBuffer(date, bufferSize, pageSize);
+            mergeSummaries(globalSummary, spSummary);
+        }
+
+        return globalSummary;
+    }
+
+    /**
+     * Alias for collectWithBuffer() - for compatibility with ApiOrchestrator
+     */
+    public ImportSummary collectMultiPlatformWithBuffer(String date, int bufferSize, int pageSize) {
+        return collectWithBuffer(date, bufferSize, pageSize);
+    }
+
+    /**
+     * Legacy method - for compatibility
+     * Returns CollectedData instead of ImportSummary (not recommended)
+     */
+    public CollectedData collectMultiPlatformData(int bufferSize) {
+        log.warn("collectMultiPlatformData() is deprecated - use collectWithBuffer() instead");
+        // Return empty CollectedData for now - this method should not be used
+        return new CollectedData();
+    }
+
+    /**
+     * Dynamic multi-platform collection with different page sizes per platform
+     * Used by ApiOrchestrator.collectAndProcessInBatches()
+     */
+    public ImportSummary collectMultiPlatformWithBufferDynamic(
+            String date,
+            int bufferSize,
+            int facebookPageSize,
+            int tiktokPageSize,
+            PlatformConfig config) {
+
+        log.info("🚀 Starting DYNAMIC multi-platform buffered collection");
+        log.info("   Date: '{}', Buffer: {}", date, bufferSize);
+        log.info("   Facebook PageSize: {}, TikTok PageSize: {}", facebookPageSize, tiktokPageSize);
+
+        ImportSummary globalSummary = ImportSummary.createWithDefaultTables();
+        globalSummary.setStartTime(LocalDateTime.now());
 
         try {
-            CollectedData data = new CollectedData();
-
-            if ("FACEBOOK".equals(platform)) {
-                data.setFacebookOrders(orderBuffer);
-                log.debug("Processing {} Facebook orders", orderBuffer.size());
-            } else if ("TIKTOK".equals(platform)) {
-                data.setTikTokOrders(orderBuffer);
-                log.debug("Processing {} TikTok orders", orderBuffer.size());
+            // Collect Facebook with custom page size
+            if (config.isFacebookEnabled()) {
+                log.info("📘 Collecting Facebook platform data...");
+                ImportSummary fbSummary = collectFacebookWithBuffer(date, bufferSize, facebookPageSize);
+                mergeSummaries(globalSummary, fbSummary);
+            } else {
+                log.info("⏭️ Facebook collection DISABLED - skipped");
             }
 
-            var result = batchProcessor.processCollectedData(data);
+            // Collect TikTok with custom page size
+            if (config.isTikTokEnabled()) {
+                log.info("📗 Collecting TikTok platform data...");
+                ImportSummary ttSummary = collectTikTokWithBuffer(date, bufferSize, tiktokPageSize);
+                mergeSummaries(globalSummary, ttSummary);
+            } else {
+                log.info("⏭️ TikTok collection DISABLED - skipped");
+            }
 
-            int orderCount = orderBuffer.size();
-            summary.addTableInsertCount("customers", orderCount);
-            summary.addTableInsertCount("orders", orderCount);
-            summary.addTableInsertCount("order_items", orderCount * 2);
-            summary.addTableInsertCount("products", orderCount);
-            summary.addTableInsertCount("geography_info", orderCount);
-            summary.addTableInsertCount("payment_info", orderCount);
-            summary.addTableInsertCount("shipping_info", orderCount);
-            summary.addTableInsertCount("order_status", orderCount);
-            summary.addTableInsertCount("order_status_detail", orderCount);
-            summary.addTableInsertCount("processing_date_info", 1);
+            // Collect Shopee with default page size (using facebook page size)
+            if (config.isShopeeEnabled()) {
+                log.info("📙 Collecting Shopee platform data...");
+                ImportSummary spSummary = collectShopeeWithBuffer(date, bufferSize, facebookPageSize);
+                mergeSummaries(globalSummary, spSummary);
+            } else {
+                log.info("⏭️ Shopee collection DISABLED - skipped");
+            }
 
-            summary.setTotalDbOperations(summary.getTotalDbOperations() + 11);
+            globalSummary.setEndTime(LocalDateTime.now());
+            globalSummary.setStatus("COMPLETED");
 
-            log.debug("✅ Flushed {} {} orders successfully", orderCount, platform);
+            log.info("✅ Multi-platform dynamic collection completed");
+            log.info("   Facebook: {}, TikTok: {}, Shopee: {}",
+                    globalSummary.getPlatformCounts().getOrDefault("FACEBOOK", 0),
+                    globalSummary.getPlatformCounts().getOrDefault("TIKTOK", 0),
+                    globalSummary.getPlatformCounts().getOrDefault("SHOPEE", 0));
 
         } catch (Exception e) {
-            log.error("Failed to flush {} buffer: {}", platform, e.getMessage(), e);
-            throw new RuntimeException("Buffer flush failed for " + platform, e);
+            log.error("❌ Multi-platform dynamic collection failed", e);
+            globalSummary.setErrorMessage("Multi-platform collection failed: " + e.getMessage());
+            globalSummary.setStatus("FAILED");
+        }
+
+        return globalSummary;
+    }
+
+    // ================================
+    // HELPER METHODS
+    // ================================
+
+    private void processBuffer(List<Object> buffer, String platform, ImportSummary summary) {
+        try {
+            log.info("🔄 Processing buffer for {} - {} orders", platform, buffer.size());
+
+            CollectedData collectedData = new CollectedData();
+
+            switch (platform) {
+                case "FACEBOOK":
+                    collectedData.setFacebookOrders(new ArrayList<>(buffer));
+                    break;
+                case "TIKTOK":
+                    collectedData.setTikTokOrders(new ArrayList<>(buffer));
+                    break;
+                case "SHOPEE":
+                    collectedData.setShopeeOrders(new ArrayList<>(buffer));
+                    break;
+            }
+
+            batchProcessor.processCollectedData(collectedData);
+
+        } catch (Exception e) {
+            log.error("❌ Buffer processing error for {}", platform, e);
+            String currentError = summary.getErrorMessage();
+            String newError = platform + " buffer processing failed: " + e.getMessage();
+            summary.setErrorMessage(currentError != null ? currentError + "; " + newError : newError);
+        }
+    }
+
+    private void mergeSummaries(ImportSummary target, ImportSummary source) {
+        // Merge statistics from source into target
+        if (source == null) return;
+
+        // Merge counts
+        target.setTotalApiCalls(target.getTotalApiCalls() + source.getTotalApiCalls());
+        target.setTotalDbOperations(target.getTotalDbOperations() + source.getTotalDbOperations());
+
+        // Merge platform counts
+        if (source.getPlatformCounts() != null) {
+            source.getPlatformCounts().forEach((platform, count) -> {
+                target.getPlatformCounts().merge(platform, count, Integer::sum);
+            });
+        }
+
+        // Merge table insert counts
+        if (source.getTableInsertCounts() != null) {
+            source.getTableInsertCounts().forEach((table, count) -> {
+                target.getTableInsertCounts().merge(table, count, Integer::sum);
+            });
+        }
+
+        // Merge error messages
+        if (source.getErrorMessage() != null && !source.getErrorMessage().isEmpty()) {
+            String currentError = target.getErrorMessage();
+            target.setErrorMessage(currentError != null ?
+                    currentError + "; " + source.getErrorMessage() : source.getErrorMessage());
         }
     }
 }

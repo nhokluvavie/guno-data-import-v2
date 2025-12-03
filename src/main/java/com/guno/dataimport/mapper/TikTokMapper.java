@@ -1,29 +1,34 @@
 package com.guno.dataimport.mapper;
 
-import com.guno.dataimport.dto.platform.facebook.*;
+import com.guno.dataimport.dto.platform.tiktok.*;
 import com.guno.dataimport.entity.*;
 import com.guno.dataimport.util.GeographyHelper;
 import com.guno.dataimport.util.KeyGenerator;
 import com.guno.dataimport.util.OrderStatusValidator;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.WeekFields;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * TikTok Mapper - Convert TikTok DTOs to Database Entities
- * REUSES: FacebookOrderDto, FacebookItemDto, FacebookCustomer (same JSON structure)
- * PATTERN: Identical to FacebookMapper with TikTok-specific values
+ * TikTok Mapper - Maps TikTok API DTOs to internal entities
+ * Pattern: Similar to FacebookMapper but with TikTok-specific structure
  */
 @Component
+@RequiredArgsConstructor
 @Slf4j
 public class TikTokMapper {
-    @Value("${api.tiktok.default-date:}")
+
     private static final DateTimeFormatter[] DATE_FORMATTERS = {
             DateTimeFormatter.ISO_DATE_TIME,
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
@@ -34,93 +39,123 @@ public class TikTokMapper {
     // CUSTOMER MAPPING
     // ================================
 
-    public Customer mapToCustomer(FacebookOrderDto order) {
-        if (order == null) return null;
-
-        if (order.getCustomer() == null) {
-            return Customer.builder()
-                    .customerId("GUEST_" + order.getOrderId())
-                    .customerKey(0L)
-                    .platformCustomerId("GUEST")
-                    .customerSegment("GUEST")
-                    .customerTier("GUEST")
-                    .acquisitionChannel("TIKTOK")
-                    .preferredPlatform("TIKTOK")
-                    .build();
+    /**
+     * Map TikTok order to Customer entity
+     * Note: TikTok doesn't provide full customer details like Facebook,
+     * so we extract from recipient_address
+     */
+    public Customer mapToCustomer(TikTokOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) {
+            return null;
         }
 
-        FacebookCustomer fbCustomer = order.getCustomer();
-        String customerId = fbCustomer.getCustomerId() != null ? fbCustomer.getCustomerId() : fbCustomer.getId();
+        TikTokOrderDetail orderDetail = order.getOrderDetail();
+        TikTokRecipientAddress address = orderDetail.getRecipientAddress();
+
+        // Generate customer ID from user_id or phone
+        String customerId = orderDetail.getUserId();
+        if (customerId == null || customerId.isEmpty()) {
+            // Fallback to phone-based ID
+            String phone = address != null ? address.getPhoneNumber() : null;
+            customerId = phone != null ? "TIKTOK_" + phone.replaceAll("[^0-9]", "") : "GUEST_" + order.getOrderIdSafe();
+        }
 
         return Customer.builder()
                 .customerId(customerId)
-                .customerKey(generateKey(customerId))
-                .platformCustomerId(customerId)
-                .phoneHash(fbCustomer.getPrimaryPhone())  // Keep original phone
-                .emailHash(fbCustomer.getPrimaryEmail())  // Keep original email
-                .gender(fbCustomer.getGender())
+                .customerKey((long) customerId.hashCode())
+                .platformCustomerId(orderDetail.getUserId())
+                .phoneHash(address != null ? address.getPhoneNumber() : "")
+                .emailHash(orderDetail.getBuyerEmail())
+                .gender("")
                 .ageGroup("")
                 .customerSegment("TIKTOK")
                 .customerTier("STANDARD")
                 .acquisitionChannel("TIKTOK")
-                .firstOrderDate(parseDateTime(fbCustomer.getInsertedAt()))
-                .lastOrderDate(parseDateTime(fbCustomer.getLastOrderAt()))
-                .totalOrders(safeInt(fbCustomer.getOrderCount()))
-                .totalSpent(safeDouble(fbCustomer.getPurchasedAmount()))
-                .averageOrderValue(calculateAov(fbCustomer))
-                .totalItemsPurchased(0)
+                .firstOrderDate(convertUnixToLocalDateTime(orderDetail.getCreateTime()))
+                .lastOrderDate(convertUnixToLocalDateTime(orderDetail.getUpdateTime()))
+                .totalOrders(1)
+                .totalSpent(orderDetail.getTotalAmount())
+                .averageOrderValue(orderDetail.getTotalAmount())
+                .totalItemsPurchased(orderDetail.getLineItemCount())
                 .daysSinceFirstOrder(0)
                 .daysSinceLastOrder(0)
                 .purchaseFrequencyDays(0.0)
                 .returnRate(0.0)
                 .cancellationRate(0.0)
-                .codPreferenceRate(0.0)
+                .codPreferenceRate(orderDetail.isCashOnDelivery() ? 1.0 : 0.0)
                 .favoriteCategory("")
                 .favoriteBrand("")
-                .preferredPaymentMethod("")
+                .preferredPaymentMethod(orderDetail.getPaymentMethodName())
                 .preferredPlatform("TIKTOK")
-                .primaryShippingProvince("")
+                .primaryShippingProvince(orderDetail.getProvince())
                 .shipsToMultipleProvinces(false)
-                .loyaltyPoints(safeInt(fbCustomer.getRewardPoint()))
-                .referralCount(safeInt(fbCustomer.getCountReferrals()))
-                .isReferrer(safeBool(fbCustomer.getIsReferrer()))
-                .customerName(fbCustomer.getName())
+                .loyaltyPoints(0)
+                .referralCount(0)
+                .isReferrer(false)
+                .customerName(address != null ? address.getFullName() : "")
                 .build();
+    }
+
+    // ================================
+    // UTILITY METHODS
+    // ================================
+
+    /**
+     * Convert Unix timestamp (seconds) to LocalDateTime
+     */
+    private LocalDateTime convertUnixToLocalDateTime(Long unixTime) {
+        if (unixTime == null) return null;
+        try {
+            return Instant.ofEpochSecond(unixTime)
+                    .atZone(ZoneId.of("Asia/Ho_Chi_Minh"))
+                    .toLocalDateTime();
+        } catch (Exception e) {
+            log.warn("Failed to convert unix time: {}", unixTime);
+            return null;
+        }
     }
 
     // ================================
     // ORDER MAPPING
     // ================================
 
-    public Order mapToOrder(FacebookOrderDto order) {
-        if (order == null) return null;
+    /**
+     * Map TikTok order to Order entity
+     */
+    public Order mapToOrder(TikTokOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) {
+            return null;
+        }
+
+        TikTokOrderDetail orderDetail = order.getOrderDetail();
+        TikTokPayment payment = orderDetail.getPayment();
 
         return Order.builder()
-                .orderId(order.getOrderId())
+                .orderId(order.getOrderIdSafe())
                 .customerId(extractCustomerId(order))
-                .shopId(order.getPageId())
+                .shopId(order.getShopId() != null ? order.getShopId().toString() : "")
                 .internalUuid("TIKTOK")
                 .orderCount(1)
-                .itemQuantity(calculateTotalQuantity(order))
-                .totalItemsInOrder(order.getItems().size())
-                .grossRevenue(safeDouble(order.getTotalPriceAfterSubDiscount()))
-                .netRevenue(safeDouble(order.getTotalPriceAfterSubDiscount()))
-                .shippingFee(safeDouble(order.getShippingFee()))
-                .taxAmount(safeDouble(order.getTax()))
-                .discountAmount(safeDouble(order.getDiscount()))
-                .codAmount(safeDouble(order.getCod()))
-                .platformFee(calculatePlatformFee(order))
-                .sellerDiscount(0.0)
-                .platformDiscount(safeDouble(order.getDiscount()))
-                .originalPrice(safeDouble(order.getTotalPriceAfterSubDiscount()))
-                .estimatedShippingFee(safeDouble(order.getShippingFee()))
-                .actualShippingFee(safeDouble(order.getShippingFee()))
+                .itemQuantity(calculateTotalQuantity(orderDetail))
+                .totalItemsInOrder(orderDetail.getLineItemCount())
+                .grossRevenue(orderDetail.getTotalAmount())
+                .netRevenue(orderDetail.getTotalAmount())
+                .shippingFee(orderDetail.getShippingFee())
+                .taxAmount(payment != null ? payment.getTaxAsDouble() : 0.0)
+                .discountAmount(orderDetail.getTotalDiscount())
+                .codAmount(orderDetail.isCashOnDelivery() ? orderDetail.getTotalAmount() : 0.0)
+                .platformFee(0.0)
+                .sellerDiscount(payment != null ? payment.getSellerDiscountAsDouble() : 0.0)
+                .platformDiscount(payment != null ? payment.getPlatformDiscountAsDouble() : 0.0)
+                .originalPrice(payment != null ? payment.getOriginalTotalProductPriceAsDouble() : 0.0)
+                .estimatedShippingFee(payment != null ? payment.getOriginalShippingFeeAsDouble() : 0.0)
+                .actualShippingFee(orderDetail.getShippingFee())
                 .shippingWeightGram(0)
                 .daysToShip(0)
-                .isDelivered(OrderStatusValidator.isDelivered(order, "TIKTOK"))
-                .isCancelled(OrderStatusValidator.isCancelled(order, "TIKTOK"))
-                .isReturned(OrderStatusValidator.isReturned(order, "TIKTOK"))
-                .isCod(order.isCodOrder())
+                .isDelivered(orderDetail.isDelivered())
+                .isCancelled(orderDetail.isCancelled())
+                .isReturned(order.hasReturnRefund())
+                .isCod(orderDetail.isCashOnDelivery())
                 .isNewCustomer(false)
                 .isRepeatCustomer(false)
                 .isBulkOrder(false)
@@ -129,60 +164,121 @@ public class TikTokMapper {
                 .orderToShipHours(0)
                 .shipToDeliveryHours(0)
                 .totalFulfillmentHours(0)
-                .customerOrderSequence(0)
-                .customerLifetimeOrders(0)
+                .customerOrderSequence(1)
+                .customerLifetimeOrders(1)
                 .customerLifetimeValue(0.0)
                 .daysSinceLastOrder(0)
-                .promotionImpact(safeDouble(order.getDiscount()))
-                .adRevenue(safeDouble(order.getTotalPriceAfterSubDiscount()))
-                .organicRevenue(safeDouble(order.getTotalPriceAfterSubDiscount()))
-                .aov(safeDouble(order.getTotalPriceAfterSubDiscount()))
-                .shippingCostRatio(calculateShippingRatio(order))
-                .createdAt(order.getCreatedAt())
-                .orderSource("UNKNOWN")
+                .promotionImpact(0.0)
+                .adRevenue(0.0)
+                .organicRevenue(0.0)
+                .aov(orderDetail.getTotalAmount())
+                .shippingCostRatio(calculateShippingRatio(orderDetail))
+                .createdAt(convertUnixToLocalDateTime(orderDetail.getCreateTime()))
+                .orderSource("TIKTOK")
                 .platformSpecificData(0)
-                .sellerId(extractSellerId(order))
-                .sellerName(extractSellerName(order))
-                .sellerEmail(extractSellerEmail(order))
-                .latestStatus(order.getStatus() != null ? order.getStatus().longValue() : null)
-                // ================================
-                // NEW FIELDS - Refund/Return/Exchange
-                // ================================
-                .isRefunded(order.isRefunded())
-                .refundAmount(order.getRefundAmount())
-                .refundDate(order.getRefundDate())
-                .isExchanged(order.isExchangeOrder())
-                .cancelReason(extractCancelReason(order))
+                .sellerId("")
+                .sellerName("")
+                .sellerEmail("")
+                .latestStatus(order.getStatusSafe() != null ? order.getStatusSafe().longValue() : null)
+                .isRefunded(order.hasReturnRefund())
+                .refundAmount(extractRefundAmount(order))
+                .refundDate(Objects.requireNonNull(extractRefundDate(order)).toLocalDate().toString())
+                .isExchanged(false)
+                .cancelReason(orderDetail.getCancelReason())
                 .build();
     }
+
+    // ================================
+    // HELPER METHODS FOR ORDER
+    // ================================
+
+    private String extractCustomerId(TikTokOrderDto order) {
+        if (!order.hasOrderDetail()) return "";
+
+        TikTokOrderDetail orderDetail = order.getOrderDetail();
+        String userId = orderDetail.getUserId();
+
+        if (userId != null && !userId.isEmpty()) {
+            return userId;
+        }
+
+        // Fallback to phone-based ID
+        TikTokRecipientAddress address = orderDetail.getRecipientAddress();
+        if (address != null && address.getPhoneNumber() != null) {
+            return "TIKTOK_" + address.getPhoneNumber().replaceAll("[^0-9]", "");
+        }
+
+        return "GUEST_" + order.getOrderIdSafe();
+    }
+
+    private int calculateTotalQuantity(TikTokOrderDetail orderDetail) {
+        if (orderDetail == null || !orderDetail.hasLineItems()) return 0;
+
+        return orderDetail.getLineItems().stream()
+                .mapToInt(item -> 1) // TikTok doesn't provide quantity per line item
+                .sum();
+    }
+
+    private Double extractRefundAmount(TikTokOrderDto order) {
+        if (!order.hasReturnRefund()) return 0.0;
+        return order.getReturnRefund().getTotalRefundAmount();
+    }
+
+    private LocalDateTime extractRefundDate(TikTokOrderDto order) {
+        if (!order.hasReturnRefund()) return null;
+        return convertUnixToLocalDateTime(order.getReturnRefund().getCreateTime());
+    }
+
+    private Double calculateShippingRatio(TikTokOrderDetail orderDetail) {
+        if (orderDetail == null) return 0.0;
+
+        Double shippingFee = orderDetail.getShippingFee();
+        Double totalAmount = orderDetail.getTotalAmount();
+
+        if (totalAmount == null || totalAmount == 0.0) return 0.0;
+        return shippingFee / totalAmount;
+    }
+
+    // TODO: More mapping methods will be added in next parts
 
     // ================================
     // ORDER ITEM MAPPING
     // ================================
 
-    public List<OrderItem> mapToOrderItems(FacebookOrderDto order) {
-        if (order == null || order.getItems() == null) return new ArrayList<>();
+    /**
+     * Map TikTok order to OrderItem entities
+     */
+    public List<OrderItem> mapToOrderItems(TikTokOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) {
+            return new ArrayList<>();
+        }
+
+        TikTokOrderDetail orderDetail = order.getOrderDetail();
+        if (!orderDetail.hasLineItems()) {
+            return new ArrayList<>();
+        }
 
         List<OrderItem> items = new ArrayList<>();
         AtomicInteger sequence = new AtomicInteger(1);
 
-        for (FacebookItemDto item : order.getItems()) {
-            int qty = safeInt(item.getQuantity());
-            double price = item.getPriceAsDouble();
+        for (TikTokLineItem lineItem : orderDetail.getLineItems()) {
+            String sku = lineItem.getSku();
+            double unitPrice = lineItem.getSalePriceAsDouble();
+            int quantity = 1; // TikTok line_items don't have quantity field, assume 1
 
             items.add(OrderItem.builder()
-                    .orderId(order.getOrderId())
-                    .sku(getSku(item))
-                    .platformProductId("TT_" + item.getId())
-                    .quantity(qty)
-                    .unitPrice(price)
-                    .totalPrice(price * qty)
-                    .itemDiscount(safeDouble(item.getTotalDiscount()))
+                    .orderId(order.getOrderIdSafe())
+                    .sku(sku)
+                    .platformProductId("TT_" + lineItem.getId())
+                    .quantity(quantity)
+                    .unitPrice(unitPrice)
+                    .totalPrice(unitPrice * quantity)
+                    .itemDiscount(parseAmount(lineItem.getSellerDiscount()) + parseAmount(lineItem.getPlatformDiscount()))
                     .promotionType("")
                     .promotionCode("")
-                    .itemStatus("")
+                    .itemStatus(lineItem.getDisplayStatus())
                     .itemSequence(sequence.getAndIncrement())
-                    .opId((long) item.getId().hashCode())
+                    .opId((long) lineItem.getId().hashCode())
                     .build());
         }
         return items;
@@ -192,49 +288,135 @@ public class TikTokMapper {
     // PRODUCT MAPPING
     // ================================
 
-    public List<Product> mapToProducts(FacebookOrderDto order) {
-        if (order == null || order.getItems() == null) return new ArrayList<>();
+    /**
+     * Map TikTok order to Product entities
+     */
+    public List<Product> mapToProducts(TikTokOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) {
+            return new ArrayList<>();
+        }
+
+        TikTokOrderDetail orderDetail = order.getOrderDetail();
+        if (!orderDetail.hasLineItems()) {
+            return new ArrayList<>();
+        }
 
         List<Product> products = new ArrayList<>();
-        for (FacebookItemDto item : order.getItems()) {
+        for (TikTokLineItem lineItem : orderDetail.getLineItems()) {
             products.add(Product.builder()
-                    .sku(getSku(item))
-                    .platformProductId("TT_" + item.getId())
-                    .productId(item.getProductId())
-                    .variationId(item.getVariationId())
-                    .barcode(getBarcode(item))
-                    .productName(getName(item))
-                    .color(getFieldValue(item, "Màu"))
-                    .size(getFieldValue(item, "Size"))
-                    .weightGram(getWeight(item))
-                    .retailPrice(item.getPriceAsDouble())
-                    .originalPrice(item.getPriceAsDouble())
-                    .priceRange(getPriceRange(item.getPriceAsDouble()))
-                    .primaryImageUrl(getImageUrl(item))
-                    .imageCount(getImageCount(item))
-                    .skuGroup(getSkuGroup(item))
+                    .sku(lineItem.getSku())
+                    .platformProductId("TT_" + lineItem.getId())
+                    .productId(lineItem.getProductId())
+                    .variationId(lineItem.getSkuId())
+                    .barcode("")
+                    .productName(lineItem.getProductName())
+                    .productDescription("")
+                    .brand("")
+                    .model("")
+                    .categoryLevel1("")
+                    .categoryLevel2("")
+                    .categoryLevel3("")
+                    .categoryPath("")
+                    .color(extractColorFromSkuName(lineItem.getSkuName()))
+                    .size(extractSizeFromSkuName(lineItem.getSkuName()))
+                    .material("")
+                    .dimensions("")
+                    .weightGram(0)
+                    .costPrice(0.0)
+                    .retailPrice(lineItem.getSalePriceAsDouble())
+                    .originalPrice(lineItem.getOriginalPriceAsDouble())
+                    .priceRange(getPriceRange(lineItem.getSalePriceAsDouble()))
+                    .isActive(true)
+                    .isFeatured(false)
+                    .isSeasonal(false)
+                    .isNewArrival(false)
+                    .isBestSeller(false)
+                    .primaryImageUrl(lineItem.getSkuImage())
+                    .imageCount(lineItem.getSkuImage() != null ? 1 : 0)
+                    .seoTitle("")
+                    .seoKeywords("")
+                    .skuGroup(lineItem.getSellerSku())
                     .build());
         }
         return products;
     }
 
     // ================================
+    // HELPER METHODS FOR ITEMS/PRODUCTS
+    // ================================
+
+    private Double parseAmount(String amount) {
+        if (amount == null || amount.isEmpty()) return 0.0;
+        try {
+            return Double.parseDouble(amount);
+        } catch (NumberFormatException e) {
+            return 0.0;
+        }
+    }
+
+    private String getPriceRange(Double price) {
+        if (price == null || price == 0.0) return "0";
+        if (price < 100000) return "0-100K";
+        if (price < 300000) return "100K-300K";
+        if (price < 500000) return "300K-500K";
+        if (price < 1000000) return "500K-1M";
+        return "1M+";
+    }
+
+    /**
+     * Extract color from sku_name (e.g. "Đỏ, Nữ M (52-59KG)")
+     * TikTok format: "Color, Size" or just "Color"
+     */
+    private String extractColorFromSkuName(String skuName) {
+        if (skuName == null || skuName.isEmpty()) return "";
+
+        // Split by comma to get first part (usually color)
+        String[] parts = skuName.split(",");
+        if (parts.length > 0) {
+            return parts[0].trim();
+        }
+        return "";
+    }
+
+    /**
+     * Extract size from sku_name (e.g. "Đỏ, Nữ M (52-59KG)")
+     * TikTok format: second part after comma
+     */
+    private String extractSizeFromSkuName(String skuName) {
+        if (skuName == null || skuName.isEmpty()) return "";
+
+        // Split by comma to get second part (usually size)
+        String[] parts = skuName.split(",");
+        if (parts.length > 1) {
+            return parts[1].trim();
+        }
+        return "";
+    }
+
+    // ================================
     // GEOGRAPHY MAPPING
     // ================================
 
-    public GeographyInfo mapToGeographyInfo(FacebookOrderDto order) {
-        if (order == null) return null;
+    /**
+     * Map TikTok order to GeographyInfo entity
+     */
+    public GeographyInfo mapToGeographyInfo(TikTokOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) {
+            return null;
+        }
 
-        String province = order.getProvinceSafe();
-        String district = order.getDistrictSafe();
+        TikTokOrderDetail orderDetail = order.getOrderDetail();
+        String province = orderDetail.getProvince();
+        String district = orderDetail.getDistrict();
 
         return GeographyInfo.builder()
-                .orderId(order.getOrderId())
+                .orderId(order.getOrderIdSafe())
                 .geographyKey(KeyGenerator.generateGeographyKey(province, district))
                 .countryCode("VN")
                 .countryName("Vietnam")
                 .provinceName(province)
                 .districtName(district)
+                .wardName(orderDetail.getWard())
                 .isUrban(GeographyHelper.isUrbanProvince(province))
                 .isMetropolitan(GeographyHelper.isMetroProvince(province))
                 .economicTier(GeographyHelper.getEconomicTier(province))
@@ -250,7 +432,6 @@ public class TikTokMapper {
                 .districtCode("")
                 .districtType("")
                 .wardCode("")
-                .wardName("")
                 .wardType("")
                 .isCoastal(false)
                 .isBorder(false)
@@ -264,16 +445,22 @@ public class TikTokMapper {
     // PAYMENT MAPPING
     // ================================
 
-    public PaymentInfo mapToPaymentInfo(FacebookOrderDto order) {
-        if (order == null) return null;
+    /**
+     * Map TikTok order to PaymentInfo entity
+     */
+    public PaymentInfo mapToPaymentInfo(TikTokOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) {
+            return null;
+        }
 
-        boolean isCod = order.isCodOrder();
+        TikTokOrderDetail orderDetail = order.getOrderDetail();
+        boolean isCod = orderDetail.isCashOnDelivery();
         String method = isCod ? "COD" : "ONLINE";
         String provider = isCod ? "CASH" : "TIKTOK_PAY";
         String category = isCod ? "CASH_ON_DELIVERY" : "ONLINE_PAYMENT";
 
         return PaymentInfo.builder()
-                .orderId(order.getOrderId())
+                .orderId(order.getOrderIdSafe())
                 .paymentKey(KeyGenerator.generatePaymentKey(method, provider, category))
                 .paymentMethod(method)
                 .paymentCategory(category)
@@ -299,17 +486,29 @@ public class TikTokMapper {
     // SHIPPING MAPPING
     // ================================
 
-    public ShippingInfo mapToShippingInfo(FacebookOrderDto order) {
-        if (order == null) return null;
+    /**
+     * Map TikTok order to ShippingInfo entity
+     */
+    public ShippingInfo mapToShippingInfo(TikTokOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) {
+            return null;
+        }
 
-        String providerId = "TIKTOK_LOGISTICS";
+        TikTokOrderDetail orderDetail = order.getOrderDetail();
+        String providerId = orderDetail.getShippingProviderId();
+        String providerName = orderDetail.getShippingProvider();
         String serviceType = "STANDARD";
 
+        if (providerId == null || providerId.isEmpty()) {
+            providerId = "TIKTOK_LOGISTICS";
+            providerName = "TikTok Logistics";
+        }
+
         return ShippingInfo.builder()
-                .orderId(order.getOrderId())
+                .orderId(order.getOrderIdSafe())
                 .shippingKey(KeyGenerator.generateShippingKey(providerId, serviceType))
                 .providerId(providerId)
-                .providerName("Tiktok Logistics")
+                .providerName(providerName)
                 .providerType("MARKETPLACE")
                 .providerTier("STANDARD")
                 .serviceType(serviceType)
@@ -317,25 +516,67 @@ public class TikTokMapper {
                 .deliveryCommitment("")
                 .shippingMethod("STANDARD")
                 .pickupType("")
-                .deliveryType("")
-                .baseFee(safeDouble(order.getShippingFee()))
+                .deliveryType(orderDetail.getDeliveryType())
+                .baseFee(orderDetail.getShippingFee())
                 .weightBasedFee(0.0)
                 .distanceBasedFee(0.0)
                 .codFee(0.0)
                 .insuranceFee(0.0)
-                .supportsCod(order.isCodOrder())
+                .supportsCod(orderDetail.isCashOnDelivery())
                 .supportsInsurance(false)
                 .supportsFragile(false)
                 .supportsRefrigerated(false)
-                .providesTracking(false)
+                .providesTracking(true)
                 .providesSmsUpdates(false)
                 .averageDeliveryDays(0.0)
                 .onTimeDeliveryRate(0.0)
                 .successDeliveryRate(0.0)
                 .damageRate(0.0)
-                .coverageProvinces(getProvinceName(order))
+                .coverageProvinces(orderDetail.getProvince())
                 .coverageNationwide(false)
                 .coverageInternational(false)
+                .build();
+    }
+
+    // ================================
+    // PROCESSING DATE MAPPING
+    // ================================
+
+    /**
+     * Map TikTok order to ProcessingDateInfo entity
+     */
+    public ProcessingDateInfo mapToProcessingDateInfo(TikTokOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) {
+            return null;
+        }
+
+        TikTokOrderDetail orderDetail = order.getOrderDetail();
+        LocalDateTime orderDate = convertUnixToLocalDateTime(orderDetail.getCreateTime());
+
+        if (orderDate == null) {
+            orderDate = LocalDateTime.now();
+        }
+
+        return ProcessingDateInfo.builder()
+                .orderId(order.getOrderIdSafe())
+                .dateKey(generateDateKey(orderDate))
+                .fullDate(orderDate.toLocalDate().toString())
+                .dayOfWeek(orderDate.getDayOfWeek().getValue())
+                .dayOfWeekName(orderDate.getDayOfWeek().name())
+                .dayOfMonth(orderDate.getDayOfMonth())
+                .dayOfYear(orderDate.getDayOfYear())
+                .weekOfYear(orderDate.get(WeekFields.ISO.weekOfWeekBasedYear()))
+                .monthOfYear(orderDate.getMonthValue())
+                .monthName(orderDate.getMonth().name())
+                .quarterOfYear((orderDate.getMonthValue() - 1) / 3 + 1)
+                .quarterName("Q" + ((orderDate.getMonthValue() - 1) / 3 + 1))
+                .year(orderDate.getYear())
+                .isWeekend(orderDate.getDayOfWeek().getValue() >= 6)
+                .isHoliday(false)
+                .isBusinessDay(orderDate.getDayOfWeek().getValue() < 6)
+                .fiscalYear(orderDate.getYear())
+                .fiscalQuarter((orderDate.getMonthValue() - 1) / 3 + 1)
+                .seasonName(getSeason(orderDate.getMonthValue()))
                 .build();
     }
 
@@ -343,31 +584,36 @@ public class TikTokMapper {
     // ORDER STATUS MAPPING
     // ================================
 
-    public List<OrderStatus> mapToOrderStatus(FacebookOrderDto order) {
-        if (order == null) return new ArrayList<>();
+    /**
+     * Map TikTok order to OrderStatus entities
+     */
+    public List<OrderStatus> mapToOrderStatus(TikTokOrderDto order) {
+        if (order == null) {
+            return new ArrayList<>();
+        }
 
         List<OrderStatus> orderStatuses = new ArrayList<>();
-        Integer currentStatus = order.getStatus();
+        Integer currentStatus = order.getStatusSafe();
 
         if (currentStatus != null) {
-            String subStatusId = extractSubStatusId(order);
-            Integer partnerStatusId = extractPartnerStatusId(order);
+            String subStatusId = "0"; // TikTok doesn't have sub_status
+            Integer partnerStatusId = 0; // Would need to parse from tracking if available
 
             OrderStatus orderStatus = OrderStatus.builder()
                     .statusKey((long) currentStatus)
-                    .orderId(order.getOrderId())
+                    .orderId(order.getOrderIdSafe())
                     .subStatusId(subStatusId)
                     .partnerStatusId(partnerStatusId)
                     .transitionDateKey(getCurrentDateKey())
-                    .transitionTimestamp(order.getInsertedAt())
+                    .transitionTimestamp(LocalDateTime.now())
                     .durationInPreviousStatusHours(0)
                     .transitionReason("ORDER_CREATED")
                     .transitionTrigger("SYSTEM")
                     .changedBy("TIKTOK_API")
                     .isOnTimeTransition(true)
                     .isExpectedTransition(true)
-                    .historyKey(generateKey("HIST_" + order.getOrderId()))
-                    .createdAt(String.valueOf(order.getInsertedAt()))
+                    .historyKey((long) ("HIST_" + order.getOrderIdSafe()).hashCode())
+                    .createdAt(order.getInsertedAt() != null ? order.getInsertedAt() : "")
                     .build();
             orderStatuses.add(orderStatus);
         }
@@ -376,324 +622,21 @@ public class TikTokMapper {
     }
 
     // ================================
-    // PROCESSING DATE MAPPING
+    // FINAL UTILITY METHODS
     // ================================
-
-    public ProcessingDateInfo mapToProcessingDateInfo(FacebookOrderDto order) {
-        if (order == null) return null;
-
-        LocalDateTime orderDate = order.getInsertedAt();
-        if (orderDate == null) {
-            orderDate = LocalDateTime.now();
-        }
-
-        return ProcessingDateInfo.builder()
-                .orderId(order.getOrderId())
-                .dateKey(generateDateKey(orderDate))
-                .fullDate(orderDate.toLocalDate().toString())
-                .dayOfWeek(orderDate.getDayOfWeek().getValue())
-                .dayOfWeekName(orderDate.getDayOfWeek().name())
-                .dayOfMonth(orderDate.getDayOfMonth())
-                .dayOfYear(orderDate.getDayOfYear())
-                .weekOfYear(orderDate.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear()))
-                .monthOfYear(orderDate.getMonthValue())
-                .monthName(orderDate.getMonth().name())
-                .quarterOfYear((orderDate.getMonthValue() - 1) / 3 + 1)
-                .quarterName("Q" + ((orderDate.getMonthValue() - 1) / 3 + 1))
-                .year(orderDate.getYear())
-                .isWeekend(orderDate.getDayOfWeek().getValue() >= 6)
-                .isHoliday(false)
-                .fiscalYear(orderDate.getYear())
-                .fiscalQuarter((orderDate.getMonthValue() - 1) / 3 + 1)
-                .isShoppingSeason(false)
-                .isPeakHour(isPeakHour(orderDate))
-                .build();
-    }
-
-    // ================================
-    // HELPER METHODS - SELLER EXTRACTION
-    // ================================
-
-    private String extractSellerId(FacebookOrderDto order) {
-        if (order.getAssigningSeller() != null && order.getAssigningSeller().getId() != null) {
-            return order.getAssigningSeller().getId();
-        }
-        return "UNKNOWN";
-    }
-
-    private String extractSellerName(FacebookOrderDto order) {
-        if (order.getAssigningSeller() != null && order.getAssigningSeller().getName() != null) {
-            return order.getAssigningSeller().getName();
-        }
-        if (order.getAccountName() != null && !order.getAccountName().trim().isEmpty()) {
-            return order.getAccountName().trim();
-        }
-        return "UNKNOWN";
-    }
-
-    private String extractSellerEmail(FacebookOrderDto order) {
-        if (order.getAssigningSeller() != null && order.getAssigningSeller().getEmail() != null) {
-            return order.getAssigningSeller().getEmail();
-        }
-        return "UNKNOWN";
-    }
-
-    // ================================
-    // HELPER METHODS - STATUS
-    // ================================
-
-    private String extractSubStatusId(FacebookOrderDto order) {
-        Integer subStatus = order.getSubStatus();
-        return subStatus != null ? subStatus.toString() : "0";
-    }
-
-    private Integer extractPartnerStatusId(FacebookOrderDto order) {
-        if (order.getTrackingHistories() == null || order.getTrackingHistories().isEmpty()) {
-            return 0;
-        }
-
-        String partnerStatus = order.getTrackingHistories().get(0).getPartnerStatus();
-        if (partnerStatus == null) return 0;
-
-        return switch (partnerStatus.toLowerCase()) {
-            case "pending" -> 1;
-            case "picking_up" -> 2;
-            case "picked_up" -> 3;
-            case "on_delivery" -> 4;
-            case "delivered" -> 5;
-            case "undeliverable" -> 6;
-            case "returning" -> 7;
-            case "returned" -> 8;
-            case "cancelled" -> 9;
-            default -> 0;
-        };
-    }
-
-    // ================================
-    // HELPER METHODS - ITEM/PRODUCT (FIXED FOR DTO STRUCTURE)
-    // ================================
-
-    private String getSku(FacebookItemDto item) {
-        if (item.getVariationInfo() != null) {
-            String displayId = item.getVariationInfo().getDisplayId();
-            if (displayId != null && !displayId.trim().isEmpty()) {
-                return displayId.trim();
-            }
-        }
-        return "SKU_" + item.getId();
-    }
-
-    private String getBarcode(FacebookItemDto item) {
-        if (item.getVariationInfo() != null) {
-            String barcode = item.getVariationInfo().getBarcode();
-            return (barcode != null && !barcode.trim().isEmpty()) ? barcode.trim() : "";
-        }
-        return "";
-    }
-
-    private String getName(FacebookItemDto item) {
-        if (item.getVariationInfo() != null) {
-            String name = item.getVariationInfo().getName();
-            if (name != null && !name.trim().isEmpty()) {
-                return name.trim();
-            }
-        }
-        return "Product " + item.getId();
-    }
-
-    private String getFieldValue(FacebookItemDto item, String fieldName) {
-        if (item.getVariationInfo() == null || item.getVariationInfo().getFields() == null) {
-            return "";
-        }
-        return item.getVariationInfo().getFields().stream()
-                .filter(f -> fieldName.equals(f.getName()))
-                .map(FacebookItemDto.VariationField::getValue)
-                .findFirst()
-                .orElse("");
-    }
-
-    private int getWeight(FacebookItemDto item) {
-        if (item.getVariationInfo() != null && item.getVariationInfo().getWeight() != null) {
-            return item.getVariationInfo().getWeight();
-        }
-        return 0;
-    }
-
-    private String getPriceRange(double price) {
-        if (price < 100000) return "UNDER_100K";
-        if (price < 500000) return "100K_500K";
-        if (price < 1000000) return "500K_1M";
-        return "OVER_1M";
-    }
-
-    private String getImageUrl(FacebookItemDto item) {
-        if (item.getVariationInfo() != null && item.getVariationInfo().getImages() != null) {
-            List<String> images = item.getVariationInfo().getImages();
-            if (!images.isEmpty()) {
-                return images.get(0);
-            }
-        }
-        return null;
-    }
-
-    private int getImageCount(FacebookItemDto item) {
-        if (item.getVariationInfo() != null && item.getVariationInfo().getImages() != null) {
-            return item.getVariationInfo().getImages().size();
-        }
-        return 0;
-    }
-
-    // ================================
-    // HELPER METHODS - GEOGRAPHY
-    // ================================
-
-    private String getProvinceName(FacebookOrderDto order) {
-        String province = order.getNewProvinceName();
-        return province != null && !province.trim().isEmpty() ? province.trim() : "Unknown";
-    }
-
-    // ================================
-    // HELPER METHODS - GENERAL
-    // ================================
-
-    private String extractCustomerId(FacebookOrderDto order) {
-        if (order.getCustomer() != null) {
-            String customerId = order.getCustomer().getCustomerId();
-            if (customerId != null) return customerId;
-            return order.getCustomer().getId();
-        }
-        return "GUEST_" + order.getOrderId();
-    }
-
-    private int calculateTotalQuantity(FacebookOrderDto order) {
-        return order.getItems().stream()
-                .mapToInt(item -> safeInt(item.getQuantity()))
-                .sum();
-    }
-
-    private boolean isDelivered(FacebookOrderDto order) {
-        Integer status = order.getStatus();
-        return status != null && status == 4;
-    }
-
-    private boolean isCancelled(FacebookOrderDto order) {
-        Integer status = order.getStatus();
-        return status != null && status == -1;
-    }
-
-    private double calculateShippingRatio(FacebookOrderDto order) {
-        double total = safeDouble(order.getTotalPriceAfterSubDiscount());
-        double shipping = safeDouble(order.getShippingFee());
-        return total > 0 ? (shipping / total) * 100 : 0.0;
-    }
-
-    private double calculateAov(FacebookCustomer customer) {
-        int orders = safeInt(customer.getOrderCount());
-        double revenue = safeDouble(customer.getPurchasedAmount());
-        return orders > 0 ? revenue / orders : 0.0;
-    }
-
-    private LocalDateTime parseDateTime(String dateStr) {
-        if (dateStr == null || dateStr.trim().isEmpty()) {
-            return null;
-        }
-
-        for (DateTimeFormatter formatter : DATE_FORMATTERS) {
-            try {
-                return LocalDateTime.parse(dateStr, formatter);
-            } catch (DateTimeParseException ignored) {
-            }
-        }
-        return null;
-    }
-
-    private Integer getCurrentDateKey() {
-        LocalDateTime now = LocalDateTime.now();
-        return Integer.parseInt(now.format(DateTimeFormatter.ofPattern("yyyyMMdd")));
-    }
 
     private Long generateDateKey(LocalDateTime dateTime) {
         return Long.parseLong(dateTime.format(DateTimeFormatter.ofPattern("yyyyMMdd")));
     }
 
-    private Long generateKey(String seed) {
-        return (long) Math.abs(seed.hashCode());
+    private Integer getCurrentDateKey() {
+        return Integer.parseInt(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")));
     }
 
-    private boolean isPeakHour(LocalDateTime dateTime) {
-        int hour = dateTime.getHour();
-        return (hour >= 10 && hour <= 14) || (hour >= 18 && hour <= 22);
-    }
-
-    private int safeInt(Integer value) {
-        return value != null ? value : 0;
-    }
-
-    private double safeDouble(Long value) {
-        return value != null ? value.doubleValue() : 0.0;
-    }
-
-    private double safeDouble(Double value) {
-        return value != null ? value : 0.0;
-    }
-
-    private boolean safeBool(Boolean value) {
-        return value != null && value;
-    }
-
-    private String getSkuGroup(FacebookItemDto item) {
-        if (item.getVariationInfo() != null) {
-            String productDisplayId = item.getVariationInfo().getProductDisplayId();
-            if (productDisplayId != null && !productDisplayId.trim().isEmpty()) {
-                return productDisplayId.trim();
-            }
-        }
-        return null;
-    }
-
-    private double calculatePlatformFee(FacebookOrderDto order) {
-        if (order.getData() == null ||
-                order.getData().getAdvancedPlatformFee() == null) {
-            return 0.0;
-        }
-
-        AdvancedPlatformFee fees = order.getData().getAdvancedPlatformFee();
-        double total = 0.0;
-
-        total += safeDouble(fees.getTax());
-        total += safeDouble(fees.getPaymentFee());
-        total += safeDouble(fees.getServiceFee());
-        total += safeDouble(fees.getSellerTransactionFee());
-
-        return total;
-    }
-
-    private String extractCancelReason(FacebookOrderDto order) {
-        // PRIORITY 1: TikTok return_reason_text (cho returned/refunded orders)
-        if (order.hasRefundData()) {
-            String returnReasonText = order.getTiktokData().getReturnRefund().getReturnReasonText();
-            if (returnReasonText != null && !returnReasonText.trim().isEmpty()) {
-                return returnReasonText.trim();
-            }
-        }
-
-        // PRIORITY 2: Cancelled order reason (status = 6)
-        if (order.getStatus() != null && order.getStatus() == 6) {
-            // Check data.returned_reason_name
-            if (order.getData() != null && order.getData().getReturnedReason() != null
-                    && !order.getData().getReturnedReason().trim().isEmpty()) {
-                return order.getData().getReturnedReason().trim();
-            }
-
-            // Check data.note
-            if (order.getData() != null && order.getData().getNote() != null
-                    && !order.getData().getNote().trim().isEmpty()) {
-                return order.getData().getNote().trim();
-            }
-
-            return "Order cancelled";
-        }
-
-        return "";
+    private String getSeason(int month) {
+        if (month >= 3 && month <= 5) return "SPRING";
+        if (month >= 6 && month <= 8) return "SUMMER";
+        if (month >= 9 && month <= 11) return "FALL";
+        return "WINTER";
     }
 }

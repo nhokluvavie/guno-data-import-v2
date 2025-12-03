@@ -1,7 +1,7 @@
 package com.guno.dataimport.api.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
+import com.guno.dataimport.dto.platform.tiktok.TikTokApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,13 +17,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * TikTok API Client - FIXED VERSION
- * REUSES: FacebookApiResponse (same JSON structure)
- *
- * FIXES:
- * 1. ✅ Use defaultPageSize in health check
- * 2. ✅ Better isApiAvailable() logic
- * 3. ✅ Fixed filter-date property name
+ * TikTok API Client - Updated to use TikTokApiResponse
+ * Pattern: Independent from Facebook, clean separation
  */
 @Component
 @RequiredArgsConstructor
@@ -54,24 +49,36 @@ public class TikTokApiClient {
     @Value("${api.tiktok.source:tiktok}")
     private String defaultSource;
 
-    @Value("${api.tiktok.filter-date:update}")  // FIXED: was api.facebook.filter-date
+    @Value("${api.tiktok.filter-date:update}")
     private String filterDate;
 
-    public FacebookApiResponse fetchOrders() {
+    /**
+     * Fetch orders with default parameters
+     */
+    public TikTokApiResponse fetchOrders() {
         String date = defaultDate.isEmpty() ?
                 LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : defaultDate;
         return fetchOrders(date, 1, defaultPageSize);
     }
 
-    public FacebookApiResponse fetchOrders(String date) {
+    /**
+     * Fetch orders with specific date
+     */
+    public TikTokApiResponse fetchOrders(String date) {
         return fetchOrders(date, 1, defaultPageSize);
     }
 
-    public FacebookApiResponse fetchOrders(String date, int page, int pageSize) {
+    /**
+     * Fetch orders with pagination and date
+     */
+    public TikTokApiResponse fetchOrders(String date, int page, int pageSize) {
         return fetchOrders(date, page, pageSize, defaultSource);
     }
 
-    public FacebookApiResponse fetchOrders(String date, int page, int pageSize, String source) {
+    /**
+     * Fetch orders with full parameters
+     */
+    public TikTokApiResponse fetchOrders(String date, int page, int pageSize, String source) {
         Map<String, Object> params = new HashMap<>();
         params.put("date", date);
         params.put("page", page);
@@ -82,7 +89,10 @@ public class TikTokApiClient {
         return callApiWithRetry(baseUrl, params);
     }
 
-    private FacebookApiResponse callApiWithRetry(String url, Map<String, Object> params) {
+    /**
+     * Call API with retry mechanism
+     */
+    private TikTokApiResponse callApiWithRetry(String url, Map<String, Object> params) {
         Exception lastException = null;
 
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
@@ -96,7 +106,7 @@ public class TikTokApiClient {
                         String.class
                 );
 
-                FacebookApiResponse apiResponse = objectMapper.readValue(response.getBody(), FacebookApiResponse.class);
+                TikTokApiResponse apiResponse = objectMapper.readValue(response.getBody(), TikTokApiResponse.class);
 
                 if (apiResponse != null) {
                     log.info("Successfully fetched {} TikTok orders for date: {}",
@@ -113,7 +123,7 @@ public class TikTokApiClient {
 
                 if (attempt < maxRetries) {
                     try {
-                        Thread.sleep(2000 * attempt);
+                        Thread.sleep(2000 * attempt); // Exponential backoff
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                         break;
@@ -127,18 +137,16 @@ public class TikTokApiClient {
     }
 
     /**
-     * FIXED: Check if TikTok API is available
+     * Check if TikTok API is available
      */
     public boolean isApiAvailable() {
         try {
             String testDate = LocalDate.now().minusDays(1)
                     .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
 
-            // FIXED: Use defaultPageSize instead of 1
             log.debug("TikTok API availability check - Date: {}, PageSize: {}", testDate, defaultPageSize);
-            FacebookApiResponse response = fetchOrders(testDate, 1, defaultPageSize);
+            TikTokApiResponse response = fetchOrders(testDate, 1, defaultPageSize);
 
-            // FIXED: Check response data instead of status code
             boolean available = response != null
                     && response.getData() != null
                     && response.getOrderCount() >= 0;
@@ -179,12 +187,12 @@ public class TikTokApiClient {
         return urlBuilder.substring(0, urlBuilder.length() - 1);
     }
 
-    private FacebookApiResponse createEmptyResponse() {
-        return FacebookApiResponse.builder()
+    private TikTokApiResponse createEmptyResponse() {
+        return TikTokApiResponse.builder()
                 .status(500)
                 .message("API call failed")
                 .code(500)
-                .data(FacebookApiResponse.FacebookDataWrapper.builder()
+                .data(TikTokApiResponse.TikTokDataWrapper.builder()
                         .count(0)
                         .page(1)
                         .build())

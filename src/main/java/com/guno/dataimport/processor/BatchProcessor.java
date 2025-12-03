@@ -4,6 +4,7 @@ import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ProcessingResult;
 import com.guno.dataimport.dto.internal.ErrorReport;
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
+import com.guno.dataimport.dto.platform.tiktok.TikTokOrderDto;
 import com.guno.dataimport.entity.*;
 import com.guno.dataimport.mapper.FacebookMapper;
 import com.guno.dataimport.mapper.ShopeeMapper;
@@ -233,9 +234,10 @@ public class BatchProcessor {
             return result;
         }
 
-        List<FacebookOrderDto> tikTokOrders = tikTokOrderObjects.stream()
-                .filter(obj -> obj instanceof FacebookOrderDto)
-                .map(obj -> (FacebookOrderDto) obj)
+        // CHANGED: Cast to TikTokOrderDto instead of FacebookOrderDto
+        List<TikTokOrderDto> tikTokOrders = tikTokOrderObjects.stream()
+                .filter(obj -> obj instanceof TikTokOrderDto)
+                .map(obj -> (TikTokOrderDto) obj)
                 .toList();
 
         if (tikTokOrders.isEmpty()) {
@@ -246,6 +248,7 @@ public class BatchProcessor {
         try {
             log.info("🎵 Mapping {} TikTok orders...", tikTokOrders.size());
 
+            // CHANGED: All mapping methods now accept List<TikTokOrderDto>
             List<Customer> customers = mapTikTokCustomers(tikTokOrders, result);
             List<Order> orders = mapTikTokOrders(tikTokOrders, result);
             List<OrderItem> orderItems = mapTikTokOrderItems(tikTokOrders, result);
@@ -258,22 +261,14 @@ public class BatchProcessor {
 
             log.info("🎵 Upserting TikTok entities via temp tables...");
 
-            // FIXED: Correct insert sequence respecting FK constraints
-
-            // Step 1: Master data (no dependencies)
+            // Same FK sequence as Facebook
             customerRepository.bulkUpsert(customers);
             productRepository.bulkUpsert(products);
-
-            // Step 2: Fact table (ORDER must be inserted BEFORE dimension tables that reference it)
             orderRepository.bulkUpsert(orders);
-
-            // Step 3: Dimension tables (have FK to order_id)
             geographyRepository.bulkUpsert(geography);
             paymentRepository.bulkUpsert(payments);
             shippingRepository.bulkUpsert(shipping);
             processingDateRepository.bulkUpsert(dates);
-
-            // Step 4: Detail tables (have FK to both order_id and other tables)
             orderItemRepository.bulkUpsert(orderItems);
             orderStatusRepository.bulkUpsert(orderStatuses);
 
@@ -499,13 +494,13 @@ public class BatchProcessor {
     // TIKTOK MAPPING METHODS
     // ================================
 
-    private List<Customer> mapTikTokCustomers(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<Customer> mapTikTokCustomers(List<TikTokOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return tikTokMapper.mapToCustomer(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("TT_CUSTOMER", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_CUSTOMER", order.getOrderIdSafe(), "TIKTOK", e));
                         return null;
                     }
                 })
@@ -519,13 +514,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<Order> mapTikTokOrders(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<Order> mapTikTokOrders(List<TikTokOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return tikTokMapper.mapToOrder(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("TT_ORDER", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_ORDER", order.getOrderIdSafe(), "TIKTOK", e));
                         result.setFailedCount(result.getFailedCount() + 1);
                         return null;
                     }
@@ -534,25 +529,25 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<OrderItem> mapTikTokOrderItems(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<OrderItem> mapTikTokOrderItems(List<TikTokOrderDto> orders, ProcessingResult result) {
         List<OrderItem> allItems = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
+        for (TikTokOrderDto order : orders) {
             try {
                 allItems.addAll(tikTokMapper.mapToOrderItems(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("TT_ORDER_ITEMS", order.getOrderId(), "TIKTOK", e));
+                result.getErrors().add(ErrorReport.of("TT_ORDER_ITEMS", order.getOrderIdSafe(), "TIKTOK", e));
             }
         }
         return allItems;
     }
 
-    private List<Product> mapTikTokProducts(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<Product> mapTikTokProducts(List<TikTokOrderDto> orders, ProcessingResult result) {
         List<Product> allProducts = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
+        for (TikTokOrderDto order : orders) {
             try {
                 allProducts.addAll(tikTokMapper.mapToProducts(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("TT_PRODUCTS", order.getOrderId(), "TIKTOK", e));
+                result.getErrors().add(ErrorReport.of("TT_PRODUCTS", order.getOrderIdSafe(), "TIKTOK", e));
             }
         }
         return allProducts.stream()
@@ -565,13 +560,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<GeographyInfo> mapTikTokGeography(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<GeographyInfo> mapTikTokGeography(List<TikTokOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return tikTokMapper.mapToGeographyInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("TT_GEOGRAPHY", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_GEOGRAPHY", order.getOrderIdSafe(), "TIKTOK", e));
                         return null;
                     }
                 })
@@ -579,13 +574,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<PaymentInfo> mapTikTokPayments(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<PaymentInfo> mapTikTokPayments(List<TikTokOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return tikTokMapper.mapToPaymentInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("TT_PAYMENT", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_PAYMENT", order.getOrderIdSafe(), "TIKTOK", e));
                         return null;
                     }
                 })
@@ -593,13 +588,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<ShippingInfo> mapTikTokShipping(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<ShippingInfo> mapTikTokShipping(List<TikTokOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return tikTokMapper.mapToShippingInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("TT_SHIPPING", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_SHIPPING", order.getOrderIdSafe(), "TIKTOK", e));
                         return null;
                     }
                 })
@@ -607,13 +602,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<ProcessingDateInfo> mapTikTokDates(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<ProcessingDateInfo> mapTikTokDates(List<TikTokOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return tikTokMapper.mapToProcessingDateInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("TT_DATE", order.getOrderId(), "TIKTOK", e));
+                        result.getErrors().add(ErrorReport.of("TT_DATE", order.getOrderIdSafe(), "TIKTOK", e));
                         return null;
                     }
                 })
@@ -621,13 +616,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<OrderStatus> mapTikTokOrderStatuses(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<OrderStatus> mapTikTokOrderStatuses(List<TikTokOrderDto> orders, ProcessingResult result) {
         List<OrderStatus> allOrderStatuses = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
+        for (TikTokOrderDto order : orders) {
             try {
                 allOrderStatuses.addAll(tikTokMapper.mapToOrderStatus(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("TT_ORDER_STATUS", order.getOrderId(), "TIKTOK", e));
+                result.getErrors().add(ErrorReport.of("TT_ORDER_STATUS", order.getOrderIdSafe(), "TIKTOK", e));
             }
         }
         return allOrderStatuses;

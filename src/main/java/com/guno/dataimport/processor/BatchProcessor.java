@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -274,6 +275,45 @@ public class BatchProcessor {
             List<ShippingInfo> shipping = mapTikTokShipping(tikTokOrders, result);
             List<ProcessingDateInfo> dates = mapTikTokDates(tikTokOrders, result);
             List<OrderStatus> orderStatuses = mapTikTokOrderStatuses(tikTokOrders, result);
+
+            Set<String> validOrderIds = orders.stream()
+                    .map(Order::getOrderId)
+                    .collect(Collectors.toSet());
+
+            if (validOrderIds.size() != tikTokOrders.size()) {
+                log.warn("⚠️ Only {} of {} orders mapped successfully",
+                        validOrderIds.size(), tikTokOrders.size());
+            }
+
+            geography = geography.stream()
+                    .filter(geo -> validOrderIds.contains(geo.getOrderId()))
+                    .toList();
+
+            payments = payments.stream()
+                    .filter(p -> validOrderIds.contains(p.getOrderId()))
+                    .toList();
+
+            shipping = shipping.stream()
+                    .filter(s -> validOrderIds.contains(s.getOrderId()))
+                    .toList();
+
+            dates = dates.stream()
+                    .filter(d -> validOrderIds.contains(d.getOrderId()))
+                    .toList();
+
+            orderItems = orderItems.stream()
+                    .filter(item -> validOrderIds.contains(item.getOrderId()))
+                    .toList();
+
+            orderStatuses = orderStatuses.stream()
+                    .filter(status -> validOrderIds.contains(status.getOrderId()))
+                    .toList();
+
+            log.info("📊 Final counts after filtering:");
+            log.info("   Orders: {}", orders.size());
+            log.info("   Geography: {}", geography.size());
+            log.info("   Payments: {}", payments.size());
+            log.info("   Shipping: {}", shipping.size());
 
             log.info("🎵 Upserting TikTok entities via temp tables...");
 

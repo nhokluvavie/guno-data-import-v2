@@ -107,49 +107,64 @@ public class BufferedDataCollector {
     // ================================
 
     public ImportSummary collectTikTokWithBuffer(String date, int bufferSize, int pageSize) {
-        log.info("🚀 Starting TikTok buffered collection - Date: '{}', Buffer: {}, PageSize: {}",
+        log.info("🎵 Starting TikTok buffered collection - Date: '{}', Buffer: {}, PageSize: {}",
                 date, bufferSize, pageSize);
 
         ImportSummary summary = ImportSummary.createWithDefaultTables();
         List<Object> orderBuffer = new ArrayList<>(bufferSize);
+
         int currentPage = 1;
         int totalOrders = 0;
+        int filteredOrders = 0;
         int apiCalls = 0;
         boolean hasMoreData = true;
 
         try {
             while (hasMoreData) {
-                log.debug("🔄 Calling TikTok API - Page: {}, Date: '{}'", currentPage, date);
+                log.debug("🔄 TikTok API - Page: {}, Date: '{}'", currentPage, date);
 
-                // FIXED: Use TikTokApiResponse
                 TikTokApiResponse response = tikTokApiClient.fetchOrders(date, currentPage, pageSize);
                 apiCalls++;
 
-                if (response == null || response.getCode() != 200) {
+                if (response == null || !response.isSuccess() || !response.hasOrders()) {
                     log.warn("TikTok API unsuccessful - Page: {}", currentPage);
                     break;
                 }
 
-                // FIXED: TikTok response structure - getOrders() directly
                 List<TikTokOrderDto> orders = response.getOrders();
 
+                // ✅ Filter null tiktok_data
+                int beforeFilter = orders.size();
+                orders = orders.stream()
+                        .filter(order -> order.hasTikTokData())
+                        .toList();
+                int filtered = beforeFilter - orders.size();
+                filteredOrders += filtered;
+
+                if (filtered > 0) {
+                    log.debug("   Filtered {} orders with null tiktok_data (page {})", filtered, currentPage);
+                }
+
                 if (orders.isEmpty()) {
-                    log.info("✅ No more TikTok orders at page {}", currentPage);
+                    log.info("No valid orders after filtering - stopping");
                     break;
                 }
 
+                // Cast to Object for buffer
                 orderBuffer.addAll(orders);
                 totalOrders += orders.size();
-                log.info("📦 TikTok Page {} collected: {} orders (Buffer: {}/{})",
-                        currentPage, orders.size(), orderBuffer.size(), bufferSize);
+
+                log.info("📦 TikTok Page {} collected: {} orders (Valid: {}, Filtered: {}, Buffer: {}/{})",
+                        currentPage, beforeFilter, orders.size(), filtered, orderBuffer.size(), bufferSize);
 
                 // Process buffer when full
                 if (orderBuffer.size() >= bufferSize) {
-                    processBuffer(orderBuffer, "TIKTOK", summary);
+                    log.info("🔄 Processing buffer: {} TikTok orders", orderBuffer.size());
+                    processBuffer(orderBuffer, "TIKTOK", summary);  // ✅ 3 parameters
                     orderBuffer.clear();
                 }
 
-                // Check if last page
+                // Check pagination
                 if (orders.size() < pageSize) {
                     log.info("✅ TikTok last page reached");
                     hasMoreData = false;
@@ -161,10 +176,13 @@ public class BufferedDataCollector {
             // Process remaining orders in buffer
             if (!orderBuffer.isEmpty()) {
                 log.info("📦 Processing remaining {} TikTok orders", orderBuffer.size());
-                processBuffer(orderBuffer, "TIKTOK", summary);
+                processBuffer(orderBuffer, "TIKTOK", summary);  // ✅ 3 parameters
             }
 
-            log.info("✅ TikTok collection completed - Total: {}, API Calls: {}", totalOrders, apiCalls);
+            summary.setTotalApiCalls(apiCalls);
+            log.info("✅ TikTok collection completed - Valid: {}, Filtered: {}, Total API Calls: {}",
+                    totalOrders, filteredOrders, apiCalls);
+
             return summary;
 
         } catch (Exception e) {

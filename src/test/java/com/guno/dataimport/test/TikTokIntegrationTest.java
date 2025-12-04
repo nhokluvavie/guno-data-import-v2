@@ -7,6 +7,7 @@ import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ProcessingResult;
 import com.guno.dataimport.dto.platform.tiktok.TikTokApiResponse;
+import com.guno.dataimport.dto.platform.tiktok.TikTokOrderDto;
 import com.guno.dataimport.processor.BatchProcessor;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
@@ -79,7 +80,6 @@ class TikTokIntegrationTest {
             while (hasMoreData) {
                 log.info("   📡 Calling TikTok API - Page: {}, PageSize: {}", currentPage, pageSize);
 
-                // UPDATED: Use TikTokApiResponse instead of FacebookApiResponse
                 TikTokApiResponse response = tikTokApiClient.fetchOrders(testDate, currentPage, pageSize);
                 totalApiCalls++;
 
@@ -89,15 +89,26 @@ class TikTokIntegrationTest {
                     break;
                 }
 
-                // UPDATED: Use TikTokApiResponse methods
                 if (!response.hasOrders()) {
                     log.info("   ✅ No more data at page {} - Stopping pagination", currentPage);
                     hasMoreData = false;
                 } else {
                     int pageOrderCount = response.getOrderCount();
-                    allOrders.addAll(response.getOrders());
-                    log.info("   📦 Page {} collected: {} orders (Total: {})",
-                            currentPage, pageOrderCount, allOrders.size());
+
+                    // ✅ FILTER: Chỉ lấy orders có tiktok_data != null
+                    List<TikTokOrderDto> validOrders = response.getOrders().stream()
+                            .filter(TikTokOrderDto::hasTikTokData)  // Filter out null tiktok_data
+                            .toList();
+
+                    int filteredCount = pageOrderCount - validOrders.size();
+                    if (filteredCount > 0) {
+                        log.warn("   ⚠️ Filtered out {} orders with null tiktok_data", filteredCount);
+                    }
+
+                    allOrders.addAll(validOrders);  // ✅ Add only valid orders
+
+                    log.info("   📦 Page {} collected: {} orders (Valid: {}, Filtered: {}, Total: {})",
+                            currentPage, pageOrderCount, validOrders.size(), filteredCount, allOrders.size());
 
                     // Check if we reached the end
                     if (pageOrderCount < pageSize) {

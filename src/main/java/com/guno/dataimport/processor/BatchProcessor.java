@@ -234,7 +234,7 @@ public class BatchProcessor {
             return result;
         }
 
-        // CHANGED: Cast to TikTokOrderDto instead of FacebookOrderDto
+        // Cast to TikTokOrderDto
         List<TikTokOrderDto> tikTokOrders = tikTokOrderObjects.stream()
                 .filter(obj -> obj instanceof TikTokOrderDto)
                 .map(obj -> (TikTokOrderDto) obj)
@@ -242,6 +242,22 @@ public class BatchProcessor {
 
         if (tikTokOrders.isEmpty()) {
             log.warn("No valid TikTok orders in input");
+            return result;
+        }
+
+        // ✅ FILTER: Remove orders with null tiktok_data
+        int originalSize = tikTokOrders.size();
+        tikTokOrders = tikTokOrders.stream()
+                .filter(order -> order.hasTikTokData())  // Keep only valid orders
+                .toList();
+
+        int filteredCount = originalSize - tikTokOrders.size();
+        if (filteredCount > 0) {
+            log.warn("⚠️ Filtered out {} TikTok orders with null tiktok_data", filteredCount);
+        }
+
+        if (tikTokOrders.isEmpty()) {
+            log.warn("No valid TikTok orders after filtering null tiktok_data");
             return result;
         }
 
@@ -272,11 +288,13 @@ public class BatchProcessor {
             orderItemRepository.bulkUpsert(orderItems);
             orderStatusRepository.bulkUpsert(orderStatuses);
 
+            result.setTotalProcessed(tikTokOrders.size());
             result.setSuccessCount(tikTokOrders.size() - result.getFailedCount());
             log.info("✅ TikTok processing completed - {} successful", result.getSuccessCount());
 
         } catch (Exception e) {
             log.error("❌ TikTok processing error: {}", e.getMessage(), e);
+            result.setTotalProcessed(tikTokOrders.size());
             result.setFailedCount(tikTokOrders.size());
             result.getErrors().add(ErrorReport.of("TIKTOK_PROCESSING", "BATCH", "TIKTOK", e));
         }

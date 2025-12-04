@@ -304,10 +304,10 @@ public class TikTokMapper {
         List<Product> products = new ArrayList<>();
         for (TikTokLineItem lineItem : orderDetail.getLineItems()) {
             products.add(Product.builder()
-                    .sku(lineItem.getSku())
+                    .sku(!Objects.equals(lineItem.getSellerSku(), "") ? lineItem.getSellerSku() : "UNKNOWN"+lineItem.getId())
                     .platformProductId("TT_" + lineItem.getId())
                     .productId(lineItem.getProductId())
-                    .variationId(lineItem.getSkuId())
+                    .variationId(lineItem.getSellerSku())
                     .barcode("")
                     .productName(lineItem.getProductName())
                     .productDescription("")
@@ -335,7 +335,7 @@ public class TikTokMapper {
                     .imageCount(lineItem.getSkuImage() != null ? 1 : 0)
                     .seoTitle("")
                     .seoKeywords("")
-                    .skuGroup(lineItem.getSellerSku())
+                    .skuGroup(!Objects.equals(lineItem.getSellerSku(), "") ? extractSkuGroup(lineItem.getSellerSku()) : "")
                     .build());
         }
         return products;
@@ -391,6 +391,30 @@ public class TikTokMapper {
             return parts[1].trim();
         }
         return "";
+    }
+
+    private String extractSkuGroup(String sellerSku) {
+        if (sellerSku == null || sellerSku.isEmpty()) {
+            return "";
+        }
+
+        sellerSku = sellerSku.trim();
+
+        // Pattern: ^(\d{2,3}[A-Z]{2,3}\d{2,3})
+        java.util.regex.Pattern pattern =
+                java.util.regex.Pattern.compile("^(\\d{2,3}[A-Z]{2,3}\\d{2,3})");
+        java.util.regex.Matcher matcher = pattern.matcher(sellerSku);
+
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+
+        // Fallback: first 7 chars if length >= 7
+        if (sellerSku.length() >= 7) {
+            return sellerSku.substring(0, 7);
+        }
+
+        return sellerSku;
     }
 
     // ================================

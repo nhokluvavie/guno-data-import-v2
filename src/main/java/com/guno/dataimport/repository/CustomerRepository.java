@@ -181,9 +181,29 @@ public class CustomerRepository {
     }
 
     public int executeBatchUpsert(List<Customer> customers) {
-        log.info("Batch upserting {} customers", customers.size());
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, customers.stream()
-                .map(this::mapToParams).toList()).length;
+        if (customers == null || customers.isEmpty()) {
+            return 0;
+        }
+
+        final int CHUNK_SIZE = 1000;
+        int totalProcessed = 0;
+
+        log.info("📦 Batch upserting {} customers in chunks of {}",
+                customers.size(), CHUNK_SIZE);
+
+        for (int i = 0; i < customers.size(); i += CHUNK_SIZE) {
+            int end = Math.min(i + CHUNK_SIZE, customers.size());
+            List<Customer> chunk = customers.subList(i, end);
+
+            int[] counts = jdbcTemplate.batchUpdate(
+                    UPSERT_SQL,
+                    chunk.stream().map(this::mapToParams).toList()
+            );
+            totalProcessed += counts.length;
+        }
+
+        log.info("✅ Customer batch completed: {} records", totalProcessed);
+        return totalProcessed;
     }
 
     private Object[] mapToParams(Customer c) {

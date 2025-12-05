@@ -174,9 +174,29 @@ public class PaymentRepository {
     }
 
     private int executeBatchUpsert(List<PaymentInfo> paymentInfos) {
-        log.info("Batch upserting {} payment records", paymentInfos.size());
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, paymentInfos.stream()
-                .map(this::mapToParams).toList()).length;
+        if (paymentInfos == null || paymentInfos.isEmpty()) {
+            return 0;
+        }
+
+        final int CHUNK_SIZE = 1000;
+        int totalProcessed = 0;
+
+        log.info("📦 Batch upserting {} payments in chunks of {}",
+                paymentInfos.size(), CHUNK_SIZE);
+
+        for (int i = 0; i < paymentInfos.size(); i += CHUNK_SIZE) {
+            int end = Math.min(i + CHUNK_SIZE, paymentInfos.size());
+            List<PaymentInfo> chunk = paymentInfos.subList(i, end);
+
+            int[] counts = jdbcTemplate.batchUpdate(
+                    UPSERT_SQL,
+                    chunk.stream().map(this::mapToParams).toList()
+            );
+            totalProcessed += counts.length;
+        }
+
+        log.info("✅ Payment batch completed: {} records", totalProcessed);
+        return totalProcessed;
     }
 
     private Object[] mapToParams(PaymentInfo p) {

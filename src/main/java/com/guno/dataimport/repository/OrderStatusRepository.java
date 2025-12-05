@@ -38,37 +38,55 @@ public class OrderStatusRepository {
      * Bulk upsert OrderStatus records
      */
     public int bulkUpsert(List<OrderStatus> orderStatuses) {
-        if (orderStatuses == null || orderStatuses.isEmpty()) return 0;
+        if (orderStatuses == null || orderStatuses.isEmpty()) {
+            return 0;
+        }
 
-        int[] results = jdbcTemplate.batchUpdate(UPSERT_SQL,
-                new org.springframework.jdbc.core.BatchPreparedStatementSetter() {
-                    @Override
-                    public void setValues(java.sql.PreparedStatement ps, int i) throws java.sql.SQLException {
-                        OrderStatus os = orderStatuses.get(i);
-                        ps.setLong(1, os.getStatusKey());
-                        ps.setString(2, os.getOrderId());
-                        ps.setString(3, os.getSubStatusId());
-                        ps.setString(4, String.valueOf(os.getPartnerStatusId()));
-                        ps.setInt(5, os.getTransitionDateKey());
-                        ps.setObject(6, os.getTransitionTimestamp());
-                        ps.setInt(7, os.getDurationInPreviousStatusHours());
-                        ps.setString(8, os.getTransitionReason());
-                        ps.setString(9, os.getTransitionTrigger());
-                        ps.setString(10, os.getChangedBy());
-                        ps.setBoolean(11, os.getIsOnTimeTransition());
-                        ps.setBoolean(12, os.getIsExpectedTransition());
-                        ps.setLong(13, os.getHistoryKey());
-                        ps.setString(14, os.getCreatedAt());
-                    }
+        final int CHUNK_SIZE = 1000;
+        int totalProcessed = 0;
 
-                    @Override
-                    public int getBatchSize() {
-                        return orderStatuses.size();
-                    }
-                });
+        log.info("📦 Batch upserting {} order statuses in chunks of {}",
+                orderStatuses.size(), CHUNK_SIZE);
 
-        log.info("Upserted {} OrderStatus records", results.length);
-        return results.length;
+        for (int i = 0; i < orderStatuses.size(); i += CHUNK_SIZE) {
+            int end = Math.min(i + CHUNK_SIZE, orderStatuses.size());
+            List<OrderStatus> chunk = orderStatuses.subList(i, end);
+
+            log.debug("   OrderStatus chunk {}-{} of {}", i + 1, end, orderStatuses.size());
+
+            // Process this chunk
+            int[] results = jdbcTemplate.batchUpdate(UPSERT_SQL,
+                    new org.springframework.jdbc.core.BatchPreparedStatementSetter() {
+                        @Override
+                        public void setValues(java.sql.PreparedStatement ps, int idx) throws java.sql.SQLException {
+                            OrderStatus os = chunk.get(idx);  // ← Use chunk, not orderStatuses
+                            ps.setLong(1, os.getStatusKey());
+                            ps.setString(2, os.getOrderId());
+                            ps.setString(3, os.getSubStatusId());
+                            ps.setString(4, String.valueOf(os.getPartnerStatusId()));
+                            ps.setInt(5, os.getTransitionDateKey());
+                            ps.setObject(6, os.getTransitionTimestamp());
+                            ps.setInt(7, os.getDurationInPreviousStatusHours());
+                            ps.setString(8, os.getTransitionReason());
+                            ps.setString(9, os.getTransitionTrigger());
+                            ps.setString(10, os.getChangedBy());
+                            ps.setBoolean(11, os.getIsOnTimeTransition());
+                            ps.setBoolean(12, os.getIsExpectedTransition());
+                            ps.setLong(13, os.getHistoryKey());
+                            ps.setString(14, os.getCreatedAt());
+                        }
+
+                        @Override
+                        public int getBatchSize() {
+                            return chunk.size();  // ← Chunk size, not full list
+                        }
+                    });
+
+            totalProcessed += results.length;
+        }
+
+        log.info("✅ OrderStatus batch completed: {} records", totalProcessed);
+        return totalProcessed;
     }
 
     public List<OrderStatus> findByOrderIds(Set<String> orderIds) {

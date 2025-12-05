@@ -175,9 +175,29 @@ public class ProcessingDateRepository {
     }
 
     private int executeBatchUpsert(List<ProcessingDateInfo> dateInfos) {
-        log.info("Batch upserting {} processing date records", dateInfos.size());
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, dateInfos.stream()
-                .map(this::mapToParams).toList()).length;
+        if (dateInfos == null || dateInfos.isEmpty()) {
+            return 0;
+        }
+
+        final int CHUNK_SIZE = 1000;
+        int totalProcessed = 0;
+
+        log.info("📦 Batch upserting {} dates in chunks of {}",
+                dateInfos.size(), CHUNK_SIZE);
+
+        for (int i = 0; i < dateInfos.size(); i += CHUNK_SIZE) {
+            int end = Math.min(i + CHUNK_SIZE, dateInfos.size());
+            List<ProcessingDateInfo> chunk = dateInfos.subList(i, end);
+
+            int[] counts = jdbcTemplate.batchUpdate(
+                    UPSERT_SQL,
+                    chunk.stream().map(this::mapToParams).toList()
+            );
+            totalProcessed += counts.length;
+        }
+
+        log.info("✅ Date batch completed: {} records", totalProcessed);
+        return totalProcessed;
     }
 
     private Object[] mapToParams(ProcessingDateInfo d) {

@@ -178,9 +178,31 @@ public class GeographyRepository {
     }
 
     private int executeBatchUpsert(List<GeographyInfo> geographyInfos) {
-        log.info("Batch upserting {} geography records", geographyInfos.size());
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, geographyInfos.stream()
-                .map(this::mapToParams).toList()).length;
+        if (geographyInfos == null || geographyInfos.isEmpty()) {
+            return 0;
+        }
+
+        final int CHUNK_SIZE = 1000;
+        int totalProcessed = 0;
+
+        log.info("📦 Batch upserting {} geography records in chunks of {}",
+                geographyInfos.size(), CHUNK_SIZE);
+
+        for (int i = 0; i < geographyInfos.size(); i += CHUNK_SIZE) {
+            int end = Math.min(i + CHUNK_SIZE, geographyInfos.size());
+            List<GeographyInfo> chunk = geographyInfos.subList(i, end);
+
+            log.debug("   Geography chunk {}-{} of {}", i + 1, end, geographyInfos.size());
+
+            int[] counts = jdbcTemplate.batchUpdate(
+                    UPSERT_SQL,
+                    chunk.stream().map(this::mapToParams).toList()
+            );
+            totalProcessed += counts.length;
+        }
+
+        log.info("✅ Geography batch completed: {} records", totalProcessed);
+        return totalProcessed;
     }
 
     private Object[] mapToParams(GeographyInfo g) {

@@ -214,9 +214,29 @@ public class ProductRepository {
     }
 
     public int executeBatchUpsert(List<Product> products) {
-        log.info("Batch upserting {} products", products.size());
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, products.stream()
-                .map(this::mapToParams).toList()).length;
+        if (products == null || products.isEmpty()) {
+            return 0;
+        }
+
+        final int CHUNK_SIZE = 1000;
+        int totalProcessed = 0;
+
+        log.info("📦 Batch upserting {} products in chunks of {}",
+                products.size(), CHUNK_SIZE);
+
+        for (int i = 0; i < products.size(); i += CHUNK_SIZE) {
+            int end = Math.min(i + CHUNK_SIZE, products.size());
+            List<Product> chunk = products.subList(i, end);
+
+            int[] counts = jdbcTemplate.batchUpdate(
+                    UPSERT_SQL,
+                    chunk.stream().map(this::mapToParams).toList()
+            );
+            totalProcessed += counts.length;
+        }
+
+        log.info("✅ Product batch completed: {} records", totalProcessed);
+        return totalProcessed;
     }
 
     private Object[] mapToParams(Product p) {

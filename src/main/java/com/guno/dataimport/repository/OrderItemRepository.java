@@ -161,9 +161,29 @@ public class OrderItemRepository {
     }
 
     private int executeBatchInsert(List<OrderItem> orderItems) {
-        log.info("Batch inserting {} order items", orderItems.size());
-        return jdbcTemplate.batchUpdate(INSERT_SQL, orderItems.stream()
-                .map(this::mapToParams).toList()).length;
+        if (orderItems == null || orderItems.isEmpty()) {
+            return 0;
+        }
+
+        final int CHUNK_SIZE = 1000;
+        int totalProcessed = 0;
+
+        log.info("📦 Batch inserting {} order items in chunks of {}",
+                orderItems.size(), CHUNK_SIZE);
+
+        for (int i = 0; i < orderItems.size(); i += CHUNK_SIZE) {
+            int end = Math.min(i + CHUNK_SIZE, orderItems.size());
+            List<OrderItem> chunk = orderItems.subList(i, end);
+
+            int[] counts = jdbcTemplate.batchUpdate(
+                    INSERT_SQL,
+                    chunk.stream().map(this::mapToParams).toList()
+            );
+            totalProcessed += counts.length;
+        }
+
+        log.info("✅ Order item batch completed: {} records", totalProcessed);
+        return totalProcessed;
     }
 
     private Object[] mapToParams(OrderItem item) {

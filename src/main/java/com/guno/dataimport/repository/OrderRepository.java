@@ -253,11 +253,32 @@ public class OrderRepository {
     /**
      * UPDATED: Added 6 new fields to batch upsert
      */
-    public int executeBatchUpsert(List<Order> orders) {
-        log.info("Batch upserting {} orders", orders.size());
-        return jdbcTemplate.batchUpdate(UPSERT_SQL, orders.stream()
-                .map(this::mapToParams).toList()).length;
+    private int executeBatchUpsert(List<Order> orders) {
+        if (orders == null || orders.isEmpty()) {
+            return 0;
+        }
+
+        final int CHUNK_SIZE = 1000;
+        int totalProcessed = 0;
+
+        log.info("📦 Batch upserting {} orders in chunks of {}",
+                orders.size(), CHUNK_SIZE);
+
+        for (int i = 0; i < orders.size(); i += CHUNK_SIZE) {
+            int end = Math.min(i + CHUNK_SIZE, orders.size());
+            List<Order> chunk = orders.subList(i, end);
+
+            int[] counts = jdbcTemplate.batchUpdate(
+                    UPSERT_SQL,
+                    chunk.stream().map(this::mapToParams).toList()
+            );
+            totalProcessed += counts.length;
+        }
+
+        log.info("✅ Order batch completed: {} records", totalProcessed);
+        return totalProcessed;
     }
+
 
     /**
      * UPDATED: Added 6 new fields to params array

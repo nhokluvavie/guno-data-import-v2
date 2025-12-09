@@ -51,9 +51,10 @@ public class OrderRepository {
         aov, shipping_cost_ratio, created_at, source, platform_specific_data,
         seller_id, seller_name, seller_email, latest_status, is_refunded, refund_amount,
         refund_date, is_exchanged, cancel_reason
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (order_id) DO UPDATE SET
         shop_id = EXCLUDED.shop_id,
+        internal_uuid = EXCLUDED.internal_uuid,
         item_quantity = EXCLUDED.item_quantity,
         total_items_in_order = EXCLUDED.total_items_in_order,
         gross_revenue = EXCLUDED.gross_revenue,
@@ -99,6 +100,7 @@ public class OrderRepository {
         try {
             return tempTableUpsert(orders, "tbl_order",
                     "order_id", "shop_id = EXCLUDED.shop_id,\n" +
+                            "        internal_uuid = EXCLUDED.internal_uuid,\n" +
                             "        item_quantity = EXCLUDED.item_quantity,\n" +
                             "        total_items_in_order = EXCLUDED.total_items_in_order,\n" +
                             "        gross_revenue = EXCLUDED.gross_revenue,\n" +

@@ -610,9 +610,9 @@ public class FacebookMapper {
         return null;
     }
 
-    private Integer getCurrentDateKey() {
+    private Long getCurrentDateKey() {
         LocalDateTime now = LocalDateTime.now();
-        return Integer.parseInt(now.format(DateTimeFormatter.ofPattern("yyyyMMdd")));
+        return Long.parseLong(now.format(DateTimeFormatter.ofPattern("yyyyMMdd")));
     }
 
     private Long generateDateKey(LocalDateTime dateTime) {

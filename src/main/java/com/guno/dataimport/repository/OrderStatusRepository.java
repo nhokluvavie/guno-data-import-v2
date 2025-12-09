@@ -64,7 +64,7 @@ public class OrderStatusRepository {
                             ps.setString(2, os.getOrderId());
                             ps.setString(3, os.getSubStatusId());
                             ps.setString(4, String.valueOf(os.getPartnerStatusId()));
-                            ps.setInt(5, os.getTransitionDateKey());
+                            ps.setLong(5, os.getTransitionDateKey());
                             ps.setObject(6, os.getTransitionTimestamp());
                             ps.setInt(7, os.getDurationInPreviousStatusHours());
                             ps.setString(8, os.getTransitionReason());
@@ -125,7 +125,7 @@ public class OrderStatusRepository {
                 .orderId(rs.getString("order_id"))
                 .subStatusId(rs.getString("sub_status_id"))
                 .partnerStatusId(Integer.valueOf(rs.getString("partner_status_id")))
-                .transitionDateKey(rs.getInt("transition_date_key"))
+                .transitionDateKey(rs.getLong("transition_date_key"))
                 .transitionTimestamp(rs.getTimestamp("transition_timestamp") != null
                         ? rs.getTimestamp("transition_timestamp").toLocalDateTime() : null)
                 .durationInPreviousStatusHours(rs.getInt("duration_in_previous_status_hours"))

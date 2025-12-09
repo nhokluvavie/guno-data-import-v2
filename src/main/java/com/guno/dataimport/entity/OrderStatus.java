@@ -23,7 +23,7 @@ public class OrderStatus {
     private String subStatusId;        // NEW - NOT NULL
     private Integer partnerStatusId;    // NEW - NOT NULL
 
-    @Builder.Default private Integer transitionDateKey = 0;
+    @Builder.Default private Long transitionDateKey = 0L;
     @Builder.Default private LocalDateTime transitionTimestamp  = LocalDateTime.now();
     @Builder.Default private Integer durationInPreviousStatusHours = 0;
 

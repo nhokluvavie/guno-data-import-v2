@@ -7,6 +7,9 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+
 /**
  * TikTok Order DTO - Top-level wrapper for TikTok order data
  * Maps to root JSON structure from TikTok API response
@@ -120,6 +123,16 @@ public class TikTokOrderDto {
             return getOrderDetail().getId();
         }
         return orderId;
+    }
+
+    public LocalDateTime getInsertedAt() {
+        if (insertedAt == null || insertedAt.trim().isEmpty()) return null;
+        try {
+            return java.time.ZonedDateTime.parse(insertedAt, java.time.format.DateTimeFormatter.ISO_DATE_TIME)
+                    .withZoneSameInstant(ZoneId.of("Asia/Ho_Chi_Minh")).toLocalDateTime();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public String getTrackingNumberSafe() {

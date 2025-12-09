@@ -29,16 +29,16 @@ spring:
 # ✅ NEW: Unified Test Data Configuration
 test:
   data:
-    date: "2025-12-09"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
+    date: "2025-11-29"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
 
 # ================================
 # PLATFORM CONFIGURATION - NEW!
 # ================================
 platform:
   facebook:
-    enabled: false
-  tiktok:
     enabled: true
+  tiktok:
+    enabled: false
   shopee:
     enabled: false
 

@@ -51,7 +51,7 @@ public class OrderRepository {
         aov, shipping_cost_ratio, created_at, source, platform_specific_data,
         seller_id, seller_name, seller_email, latest_status, is_refunded, refund_amount,
         refund_date, is_exchanged, cancel_reason
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (order_id) DO UPDATE SET
         shop_id = EXCLUDED.shop_id,
         internal_uuid = EXCLUDED.internal_uuid,
@@ -60,6 +60,10 @@ public class OrderRepository {
         gross_revenue = EXCLUDED.gross_revenue,
         net_revenue = EXCLUDED.net_revenue,
         shipping_fee = EXCLUDED.shipping_fee,
+        tax_amount = EXCLUDED.tax_amount,
+        discount_amount = EXCLUDED.discount_amount,
+        cod_amount = EXCLUDED.cod_amount,
+        platform_fee = EXCLUDED.platform_fee,
         is_delivered = EXCLUDED.is_delivered,
         is_cancelled = EXCLUDED.is_cancelled,
         is_returned = EXCLUDED.is_returned,
@@ -106,6 +110,10 @@ public class OrderRepository {
                             "        gross_revenue = EXCLUDED.gross_revenue,\n" +
                             "        net_revenue = EXCLUDED.net_revenue,\n" +
                             "        shipping_fee = EXCLUDED.shipping_fee,\n" +
+                            "        tax_amount = EXCLUDED.tax_amount,\n" +
+                            "        discount_amount = EXCLUDED.discount_amount,\n" +
+                            "        cod_amount = EXCLUDED.cod_amount,\n" +
+                            "        platform_fee = EXCLUDED.platform_fee," +
                             "        is_delivered = EXCLUDED.is_delivered,\n" +
                             "        is_cancelled = EXCLUDED.is_cancelled,\n" +
                             "        is_returned = EXCLUDED.is_returned,\n" +

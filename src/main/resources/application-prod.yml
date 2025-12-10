@@ -110,7 +110,7 @@ processing:
 scheduler:
   import:
     enabled: true
-    cron: 0 */20 * * * *
+    cron: 0 */5 * * * *
     use-parallel: false
     auto-start: true
 

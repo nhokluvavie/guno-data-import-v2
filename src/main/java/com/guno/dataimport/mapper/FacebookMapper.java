@@ -1,9 +1,6 @@
 package com.guno.dataimport.mapper;
 
-import com.guno.dataimport.dto.platform.facebook.AdvancedPlatformFee;
-import com.guno.dataimport.dto.platform.facebook.FacebookCustomer;
-import com.guno.dataimport.dto.platform.facebook.FacebookItemDto;
-import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
+import com.guno.dataimport.dto.platform.facebook.*;
 import com.guno.dataimport.entity.*;
 import com.guno.dataimport.util.GeographyHelper;
 import com.guno.dataimport.util.KeyGenerator;
@@ -20,6 +17,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+
 import com.guno.dataimport.util.OrderStatusValidator;
 
 /**
@@ -151,7 +150,7 @@ public class FacebookMapper {
                 .sellerId(extractSellerId(order))
                 .sellerName(extractSellerName(order))
                 .sellerEmail(extractSellerEmail(order))
-                .latestStatus(order.getStatus() != null ? order.getStatus().longValue() : null)
+                .latestStatus(order.getStatus() != null ? mapFaceBookLatestStatus(order) : null)
                 // ================================
                 // NEW FIELDS - Refund/Return/Exchange
                 // ================================
@@ -160,6 +159,7 @@ public class FacebookMapper {
                 .refundDate(order.getRefundDate())
                 .isExchanged(order.isExchangeOrder())
                 .cancelReason("")
+                .cancelTime(extractCancelTime(order))
                 .build();
     }
 
@@ -682,5 +682,39 @@ public class FacebookMapper {
             }
             default -> "ERROR";
         };
+    }
+
+    private Long mapFaceBookLatestStatus(FacebookOrderDto order) {
+        long orderStatus = order.getStatus().longValue();
+        List<String> tags = new ArrayList<>();
+        order.getData().getTags().forEach(tag -> tags.add(tag.getName()));
+        if (orderStatus == 3L && tags.contains("Reconciled")) {
+            return 22L;
+        }
+        return orderStatus;
+    }
+
+    /**
+     * Extract cancel_time từ histories
+     */
+    private String extractCancelTime(FacebookOrderDto order) {
+        if (order == null || order.getData() == null || order.getData().getHistories() == null) {
+            return null;
+        }
+
+        // Tìm ChangedLog đầu tiên có status.newValue = 6 (Canceled)
+        for (ChangedLog history : order.getData().getHistories()) {
+            if (history != null && history.getStatus() != null
+                    && history.getStatus().getNewValue() != null
+                    && history.getStatus().getNewValue() == 6) {
+
+                String updatedAt = history.getUpdatedAt();
+                if (updatedAt != null) {
+                    // Convert "2025-10-06T10:20:08" -> "2025-10-06 10:20:08"
+                    return updatedAt.replace("T", " ").split("[.+Z]")[0];
+                }
+            }
+        }
+        return null;
     }
 }

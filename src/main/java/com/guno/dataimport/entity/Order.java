@@ -113,4 +113,5 @@ public class Order {
      * ALL PLATFORMS: Extracted from order notes/history when status = 6 (Canceled)
      */
     @Builder.Default private String cancelReason = "";
+    @Builder.Default private String cancelTime = "";
 }

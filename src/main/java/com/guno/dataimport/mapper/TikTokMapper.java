@@ -35,8 +35,9 @@ public class TikTokMapper {
     private static final Long STATUS_DELIVERED = 3L;
     private static final Long STATUS_CANCELED = 6L;
     private static final Long STATUS_WAITING_PICKUP = 9L;
-    private static final Long STATUS_COLLECTED_MONEY = 16L;
+    private static final Long STATUS_COLLECTED_MONEY = 22L;
     private static final Long STATUS_WAITING_CONFIRMATION = 17L;
+    private static final Long STATUS_RETURNED = 5L;
 
     // ================================
     // STATUS MAPPING
@@ -47,32 +48,40 @@ public class TikTokMapper {
 
         // PRIORITY 1: Return/Refund
         if (order.hasReturnRefund()) {
-            String returnType = order.getReturnRefund().getReturnType();
-            if (returnType != null) {
-                Long returnStatus = switch (returnType.toUpperCase()) {
-                    case "REFUND" -> STATUS_REFUNDED;
-                    case "RETURN_AND_REFUND" -> STATUS_RETURN_AND_REFUND;
-                    case "REPLACEMENT" -> STATUS_REPLACEMENT;
-                    default -> null;
-                };
-                if (returnStatus != null) return returnStatus;
-            }
+            String returnType = order.getReturnRefund().getReturnType().toUpperCase();
+            String returnStatus = order.getReturnRefund().getReturnStatus().toUpperCase();
+            if (returnType.equals("RETURN_AND_REFUND") &&
+                    (returnStatus.equals("RETURN_OR_REFUND_REQUEST_COMPLETE") || returnStatus.equals("RETURN_OR_REFUND_REQUEST_SUCCESS")))
+                return STATUS_RETURN_AND_REFUND;
+
+            if (returnType.equals("REFUND") &&
+                    (returnStatus.equals("RETURN_OR_REFUND_REQUEST_COMPLETE") || returnStatus.equals("RETURN_OR_REFUND_REQUEST_SUCCESS")))
+                return STATUS_REFUNDED;
+
+            if (returnType.equals("REPLACEMENT"))
+                return STATUS_REPLACEMENT;
         }
 
         // PRIORITY 2: Order Status (field: "status")
         TikTokOrderDetail detail = order.getOrderDetail();
+
         if (detail != null && detail.getStatus() != null) {
-            return switch (detail.getStatus().toUpperCase()) {
-                case "UNPAID" -> STATUS_NEW;
-                case "ON_HOLD" -> STATUS_WAITING_CONFIRMATION;
-                case "AWAITING_SHIPMENT" -> STATUS_CONFIRMED;
-                case "AWAITING_COLLECTION" -> STATUS_WAITING_PICKUP;
-                case "IN_TRANSIT" -> STATUS_SHIPPED;
-                case "DELIVERED" -> STATUS_DELIVERED;
-                case "COMPLETED" -> STATUS_COLLECTED_MONEY;
-                case "CANCEL" -> STATUS_CANCELED;
-                default -> STATUS_NEW;
-            };
+            if (detail.getStatus().equalsIgnoreCase("CANCELLED") && detail.getCollectionTime() != null) {
+                return STATUS_RETURNED;
+            } else {
+                return switch (detail.getStatus().toUpperCase()) {
+                    case "UNPAID" -> STATUS_NEW;
+                    case "ON_HOLD" -> STATUS_WAITING_CONFIRMATION;
+                    case "AWAITING_SHIPMENT" -> STATUS_CONFIRMED;
+                    case "AWAITING_COLLECTION" -> STATUS_WAITING_PICKUP;
+                    case "PARTIALLY_SHIPPING" -> STATUS_SHIPPED;
+                    case "IN_TRANSIT" -> STATUS_SHIPPED;
+                    case "DELIVERED" -> STATUS_DELIVERED;
+                    case "COMPLETED" -> STATUS_COLLECTED_MONEY;
+                    case "CANCELLED" -> STATUS_CANCELED;
+                    default -> STATUS_NEW;
+                };
+            }
         }
 
         return STATUS_NEW;
@@ -140,7 +149,7 @@ public class TikTokMapper {
         }
 
         TikTokReturnRefund refund = order.getReturnRefund();
-        Double totalAmount = detail.getTotalAmount();
+        Double totalAmount = detail.getPayment().getOriginalTotalProductPriceAsDouble() - detail.getPayment().getSellerDiscountAsDouble();
         Double shippingFee = detail.getShippingFee();
 
         return Order.builder()
@@ -198,6 +207,7 @@ public class TikTokMapper {
                 .refundDate(extractRefundDate(refund))
                 .isExchanged(refund != null && "REPLACEMENT".equals(refund.getReturnType()))
                 .cancelReason("CANCEL".equals(detail.getStatus()) ? "USER_CANCELLED" : null)
+                .cancelTime(extractCancelTime(order))
                 .build();
     }
 
@@ -595,5 +605,24 @@ public class TikTokMapper {
         if (month >= 6 && month <= 8) return "SUMMER";
         if (month >= 9 && month <= 11) return "FALL";
         return "WINTER";
+    }
+
+    /**
+     * Extract cancel_time từ TikTok
+     */
+    private String extractCancelTime(TikTokOrderDto order) {
+        if (order == null || order.getTiktokData() == null) {
+            return null;
+        }
+
+        TikTokOrderDetail detail = order.getTiktokData().getOrderDetail();
+        if (detail == null || detail.getCancelTime() == null || detail.getCancelTime() <= 0) {
+            return null;
+        }
+
+        // Convert Unix timestamp to "yyyy-MM-dd HH:mm:ss"
+        Instant instant = Instant.ofEpochSecond(detail.getCancelTime());
+        LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.of("Asia/Ho_Chi_Minh"));
+        return dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 }

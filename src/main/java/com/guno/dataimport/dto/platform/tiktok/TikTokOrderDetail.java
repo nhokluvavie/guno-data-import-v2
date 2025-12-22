@@ -153,6 +153,9 @@ public class TikTokOrderDetail {
     @Builder.Default
     private List<TikTokPackage> packages = new ArrayList<>();
 
+    @JsonProperty("cancel_time")
+    private Long cancelTime;
+
     // Helper methods for easier data access
 
     public String getOrderId() {

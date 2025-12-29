@@ -688,7 +688,7 @@ public class FacebookMapper {
         long orderStatus = order.getStatus().longValue();
         List<String> tags = new ArrayList<>();
         order.getData().getTags().forEach(tag -> tags.add(tag.getName()));
-        if (orderStatus == 3L && tags.contains("Reconciled")) {
+        if (orderStatus == 3L && (tags.contains("Reconciled") || tags.contains("Đã đối soát"))) {
             return 22L;
         }
         return orderStatus;

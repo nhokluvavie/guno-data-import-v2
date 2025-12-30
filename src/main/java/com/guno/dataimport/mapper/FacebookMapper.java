@@ -691,6 +691,10 @@ public class FacebookMapper {
         if (orderStatus == 3L && (tags.contains("Reconciled") || tags.contains("Đã đối soát"))) {
             return 22L;
         }
+        if (orderStatus == 4L ||  orderStatus == 5L || orderStatus == 15L) {
+            if (tags.contains("Hoàn Tách đơn (lấy 1 phần)")) return 15L;
+            else return orderStatus;
+        }
         return orderStatus;
     }
 

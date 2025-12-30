@@ -29,7 +29,7 @@ spring:
 # ✅ NEW: Unified Test Data Configuration
 test:
   data:
-    date: "2025-12-28"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
+    date: "2025-12-29"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
 
 # ================================
 # PLATFORM CONFIGURATION - NEW!

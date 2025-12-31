@@ -78,8 +78,9 @@ public class TikTokApiResponse {
         return getOrderCount() > 0;
     }
 
-    public boolean hasNextPage() {
-        return data != null && data.hasNext != null && data.hasNext;
+    public Boolean hasNextPage() {
+        if (data == null) return null;
+        return data.hasNext;
     }
 
     public Integer getCurrentPage() {

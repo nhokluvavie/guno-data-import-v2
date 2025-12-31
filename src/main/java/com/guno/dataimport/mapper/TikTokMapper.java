@@ -34,7 +34,7 @@ public class TikTokMapper {
     private static final Long STATUS_SHIPPED = 2L;
     private static final Long STATUS_DELIVERED = 3L;
     private static final Long STATUS_CANCELED = 6L;
-    private static final Long STATUS_WAITING_PICKUP = 9L;
+    private static final Long STATUS_PACKAGING = 8L;
     private static final Long STATUS_COLLECTED_MONEY = 22L;
     private static final Long STATUS_WAITING_CONFIRMATION = 17L;
     private static final Long STATUS_RETURNED = 5L;
@@ -72,8 +72,8 @@ public class TikTokMapper {
                 return switch (detail.getStatus().toUpperCase()) {
                     case "UNPAID" -> STATUS_NEW;
                     case "ON_HOLD" -> STATUS_WAITING_CONFIRMATION;
-                    case "AWAITING_SHIPMENT" -> STATUS_CONFIRMED;
-                    case "AWAITING_COLLECTION" -> STATUS_WAITING_PICKUP;
+                    case "AWAITING_SHIPMENT" -> STATUS_PACKAGING;
+                    case "AWAITING_COLLECTION" -> STATUS_CONFIRMED;
                     case "PARTIALLY_SHIPPING" -> STATUS_SHIPPED;
                     case "IN_TRANSIT" -> STATUS_SHIPPED;
                     case "DELIVERED" -> STATUS_DELIVERED;

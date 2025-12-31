@@ -160,23 +160,33 @@ public class BufferedDataCollector {
                 // Process buffer when full
                 if (orderBuffer.size() >= bufferSize) {
                     log.info("🔄 Processing buffer: {} TikTok orders", orderBuffer.size());
-                    processBuffer(orderBuffer, "TIKTOK", summary);  // ✅ 3 parameters
+                    processBuffer(orderBuffer, "TIKTOK", summary);
                     orderBuffer.clear();
                 }
 
-                // Check pagination
-                if (orders.size() < pageSize) {
-                    log.info("✅ TikTok last page reached");
+                // ✅ FIXED: Check pagination properly
+                // Option 1: Use API response hasNextPage (if available)
+                Boolean hasNext = response.hasNextPage();
+                if (hasNext != null && !hasNext) {
+                    log.info("✅ TikTok API indicates no more pages (hasNextPage=false)");
                     hasMoreData = false;
                 }
-
-                currentPage++;
+                // Option 2: Fallback to checking if less than pageSize (BEFORE filter)
+                else if (beforeFilter < pageSize) {
+                    log.info("✅ TikTok last page reached (partial page: {} < {})", beforeFilter, pageSize);
+                    hasMoreData = false;
+                }
+                // ✅ CRITICAL: If full page received, continue to next page
+                else {
+                    log.debug("   ➡️ Full page received, continuing to next page...");
+                    currentPage++;
+                }
             }
 
             // Process remaining orders in buffer
             if (!orderBuffer.isEmpty()) {
                 log.info("📦 Processing remaining {} TikTok orders", orderBuffer.size());
-                processBuffer(orderBuffer, "TIKTOK", summary);  // ✅ 3 parameters
+                processBuffer(orderBuffer, "TIKTOK", summary);
             }
 
             summary.setTotalApiCalls(apiCalls);

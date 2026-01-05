@@ -72,8 +72,8 @@ public class TikTokMapper {
                 return switch (detail.getStatus().toUpperCase()) {
                     case "UNPAID" -> STATUS_NEW;
                     case "ON_HOLD" -> STATUS_WAITING_CONFIRMATION;
-                    case "AWAITING_SHIPMENT" -> STATUS_PACKAGING;
-                    case "AWAITING_COLLECTION" -> STATUS_CONFIRMED;
+                    case "AWAITING_SHIPMENT" -> STATUS_CONFIRMED;
+                    case "AWAITING_COLLECTION" -> STATUS_PACKAGING;
                     case "PARTIALLY_SHIPPING" -> STATUS_SHIPPED;
                     case "IN_TRANSIT" -> STATUS_SHIPPED;
                     case "DELIVERED" -> STATUS_DELIVERED;

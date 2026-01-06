@@ -20,6 +20,7 @@ import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import com.guno.dataimport.util.DateSelectionService;
 
 @Service
 @RequiredArgsConstructor
@@ -32,6 +33,7 @@ public class ApiOrchestrator {
     private final BatchProcessor batchProcessor;
     private final BufferedDataCollector bufferedDataCollector;
     private final PlatformConfig platformConfig;
+    private final DateSelectionService dateSelectionService;
 
     @Value("${api.facebook.page-size:3000}")
     private int facebookPageSize;
@@ -91,11 +93,20 @@ public class ApiOrchestrator {
                     .build();
         }
 
-        String currentDate = LocalDate.now(VIETNAM_ZONE).toString();
+        // ✅ CHANGED: Use DateSelectionService instead of LocalDate.now()
+        String currentDate = dateSelectionService.getCollectionDate();
 
         log.info("📅 Collecting data for date: {} (GMT+7)", currentDate);
         log.info("📊 PageSize Config - Facebook: {}, TikTok: {}", facebookPageSize, tiktokPageSize);
         log.info("🎯 Enabled platforms: {}", platformConfig.getEnabledPlatforms());
+
+        // ✅ ADDED: Log grace period info
+        if (dateSelectionService.isInGracePeriod()) {
+            long minutesLeft = dateSelectionService.getMinutesUntilCutoff();
+            log.info("⏰ Grace period active - collecting yesterday's data until {:02d}:00 AM",
+                    dateSelectionService.getCutoffHour());
+            log.info("   Time remaining: {} minutes", minutesLeft);
+        }
 
         return bufferedDataCollector.collectMultiPlatformWithBufferDynamic(
                 currentDate,

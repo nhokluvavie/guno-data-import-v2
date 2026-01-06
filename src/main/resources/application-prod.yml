@@ -114,6 +114,10 @@ scheduler:
     use-parallel: false
     auto-start: true
 
+date-selection:
+  cutoff-hour: 2
+  timezone: Asia/Ho_Chi_Minh
+
 # ================================
 # LOGGING CONFIGURATION
 # ================================

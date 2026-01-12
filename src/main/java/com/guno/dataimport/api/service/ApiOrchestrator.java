@@ -14,10 +14,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import com.guno.dataimport.dto.platform.shopee.ShopeeApiResponse;
+import com.guno.dataimport.dto.platform.shopee.ShopeeOrderDto;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.HashMap;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import com.guno.dataimport.util.DateSelectionService;
@@ -231,12 +234,20 @@ public class ApiOrchestrator {
 
             if (platformConfig.isShopeeEnabled()) {
                 log.info("📙 Collecting Shopee orders...");
-                FacebookApiResponse shopeeResponse = shopeeApiClient.fetchOrders("", 1, 100);
+
+                // ✅ CLEAN: Use ShopeeApiResponse
+                ShopeeApiResponse shopeeResponse = shopeeApiClient.fetchOrders("", 1, 100);
+
                 if (shopeeResponse.getData() != null && shopeeResponse.getData().getOrders() != null) {
-                    data.setShopeeOrders(shopeeResponse.getData().getOrders().stream()
+                    // ✅ CLEAN: Direct access to ShopeeOrderDto list
+                    List<Object> shopeeOrders = shopeeResponse.getOrders().stream()
+                            .filter(ShopeeOrderDto::hasShopeeData)
                             .map(order -> (Object) order)
-                            .toList());
-                    log.info("✅ Collected {} Shopee orders", data.getShopeeOrders().size());
+                            .toList();
+
+                    data.setShopeeOrders(shopeeOrders);
+
+                    log.info("✅ Collected {} Shopee orders", shopeeOrders.size());
                 } else {
                     log.warn("⚠️ Shopee API returned no data");
                 }

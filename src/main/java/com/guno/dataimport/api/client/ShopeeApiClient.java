@@ -1,7 +1,7 @@
 package com.guno.dataimport.api.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
+import com.guno.dataimport.dto.platform.shopee.ShopeeApiResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,17 +17,15 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Shopee API Client - FIXED VERSION
- * REUSES: FacebookApiResponse (same JSON structure)
- *
- * FIXES:
- * 1. ✅ Use defaultPageSize in health check
- * 2. ✅ Better isApiAvailable() logic
+ * Shopee API Client - CLEAN VERSION
+ * ✅ Uses ShopeeApiResponse (not FacebookApiResponse)
+ * Pattern: Identical to TikTokApiClient
  */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class ShopeeApiClient {
+
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
@@ -55,21 +53,33 @@ public class ShopeeApiClient {
     @Value("${api.shopee.filter-date:update}")
     private String filterDate;
 
-    public FacebookApiResponse fetchOrders() {
+    /**
+     * Fetch orders with default parameters
+     */
+    public ShopeeApiResponse fetchOrders() {
         String date = defaultDate.isEmpty() ?
                 LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : defaultDate;
         return fetchOrders(date, 1, defaultPageSize);
     }
 
-    public FacebookApiResponse fetchOrders(String date) {
+    /**
+     * Fetch orders with specific date
+     */
+    public ShopeeApiResponse fetchOrders(String date) {
         return fetchOrders(date, 1, defaultPageSize);
     }
 
-    public FacebookApiResponse fetchOrders(String date, int page, int pageSize) {
+    /**
+     * Fetch orders with pagination and date
+     */
+    public ShopeeApiResponse fetchOrders(String date, int page, int pageSize) {
         return fetchOrders(date, page, pageSize, defaultSource);
     }
 
-    public FacebookApiResponse fetchOrders(String date, int page, int pageSize, String source) {
+    /**
+     * Fetch orders with full parameters
+     */
+    public ShopeeApiResponse fetchOrders(String date, int page, int pageSize, String source) {
         Map<String, Object> params = new HashMap<>();
         params.put("date", date);
         params.put("page", page);
@@ -80,7 +90,10 @@ public class ShopeeApiClient {
         return callApiWithRetry(baseUrl, params);
     }
 
-    private FacebookApiResponse callApiWithRetry(String url, Map<String, Object> params) {
+    /**
+     * Call API with retry mechanism
+     */
+    private ShopeeApiResponse callApiWithRetry(String url, Map<String, Object> params) {
         Exception lastException = null;
 
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
@@ -94,7 +107,7 @@ public class ShopeeApiClient {
                         String.class
                 );
 
-                FacebookApiResponse apiResponse = objectMapper.readValue(response.getBody(), FacebookApiResponse.class);
+                ShopeeApiResponse apiResponse = objectMapper.readValue(response.getBody(), ShopeeApiResponse.class);
 
                 if (apiResponse != null) {
                     log.info("Successfully fetched {} Shopee orders for date: {}",
@@ -111,7 +124,7 @@ public class ShopeeApiClient {
 
                 if (attempt < maxRetries) {
                     try {
-                        Thread.sleep(2000 * attempt);
+                        Thread.sleep(2000 * attempt); // Exponential backoff
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                         break;
@@ -125,18 +138,16 @@ public class ShopeeApiClient {
     }
 
     /**
-     * FIXED: Check if Shopee API is available
+     * Check if Shopee API is available
      */
     public boolean isApiAvailable() {
         try {
             String testDate = LocalDate.now().minusDays(1)
                     .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
 
-            // FIXED: Use defaultPageSize instead of 1
             log.debug("Shopee API availability check - Date: {}, PageSize: {}", testDate, defaultPageSize);
-            FacebookApiResponse response = fetchOrders(testDate, 1, defaultPageSize);
+            ShopeeApiResponse response = fetchOrders(testDate, 1, defaultPageSize);
 
-            // FIXED: Check response data instead of status code
             boolean available = response != null
                     && response.getData() != null
                     && response.getOrderCount() >= 0;
@@ -177,12 +188,12 @@ public class ShopeeApiClient {
         return urlBuilder.substring(0, urlBuilder.length() - 1);
     }
 
-    private FacebookApiResponse createEmptyResponse() {
-        return FacebookApiResponse.builder()
+    private ShopeeApiResponse createEmptyResponse() {
+        return ShopeeApiResponse.builder()
                 .status(500)
                 .message("API call failed")
                 .code(500)
-                .data(FacebookApiResponse.FacebookDataWrapper.builder()
+                .data(ShopeeApiResponse.ShopeeDataWrapper.builder()
                         .count(0)
                         .page(1)
                         .build())

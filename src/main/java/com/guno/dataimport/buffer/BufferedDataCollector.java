@@ -8,6 +8,8 @@ import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ImportSummary;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
+import com.guno.dataimport.dto.platform.shopee.ShopeeApiResponse;
+import com.guno.dataimport.dto.platform.shopee.ShopeeOrderDto;
 import com.guno.dataimport.dto.platform.tiktok.TikTokApiResponse;
 import com.guno.dataimport.dto.platform.tiktok.TikTokOrderDto;
 import com.guno.dataimport.processor.BatchProcessor;
@@ -216,14 +218,15 @@ public class BufferedDataCollector {
         int currentPage = 1;
         int totalOrders = 0;
         int apiCalls = 0;
+        int filteredOrders = 0;
         boolean hasMoreData = true;
 
         try {
             while (hasMoreData) {
                 log.debug("🔄 Calling Shopee API - Page: {}, Date: '{}'", currentPage, date);
 
-                // Shopee uses FacebookApiResponse (same structure)
-                FacebookApiResponse response = shopeeApiClient.fetchOrders(date, currentPage, pageSize);
+                // ✅ CLEAN: Use ShopeeApiResponse
+                ShopeeApiResponse response = shopeeApiClient.fetchOrders(date, currentPage, pageSize);
                 apiCalls++;
 
                 if (response == null || response.getCode() != 200 ||
@@ -232,31 +235,38 @@ public class BufferedDataCollector {
                     break;
                 }
 
-                List<FacebookOrderDto> orders = response.getData().getOrders();
-
-                if (orders.isEmpty()) {
+                if (response.getData().getOrders().isEmpty()) {
                     log.info("✅ No more Shopee orders at page {}", currentPage);
                     break;
                 }
 
-                orderBuffer.addAll(orders);
-                totalOrders += orders.size();
-                log.info("📦 Shopee Page {} collected: {} orders (Buffer: {}/{})",
-                        currentPage, orders.size(), orderBuffer.size(), bufferSize);
+                // ✅ CLEAN: Direct access to ShopeeOrderDto list
+                List<ShopeeOrderDto> validOrders = response.getOrders().stream()
+                        .filter(ShopeeOrderDto::hasShopeeData)
+                        .toList();
 
-                // Process buffer when full
+                filteredOrders += (response.getOrderCount() - validOrders.size());
+
+                orderBuffer.addAll(validOrders);
+                totalOrders += validOrders.size();
+
+                log.debug("📦 Collected {} Shopee orders - Buffer: {}/{}",
+                        validOrders.size(), orderBuffer.size(), bufferSize);
+
+                // Process buffer if full
                 if (orderBuffer.size() >= bufferSize) {
+                    log.info("💾 Buffer full ({}) - Processing batch", orderBuffer.size());
                     processBuffer(orderBuffer, "SHOPEE", summary);
                     orderBuffer.clear();
                 }
 
-                // Check if last page
-                if (orders.size() < pageSize) {
-                    log.info("✅ Shopee last page reached");
+                // Check pagination
+                if (response.getOrderCount() < pageSize) {
+                    log.info("✅ Last page detected");
                     hasMoreData = false;
+                } else {
+                    currentPage++;
                 }
-
-                currentPage++;
             }
 
             // Process remaining orders in buffer
@@ -265,7 +275,10 @@ public class BufferedDataCollector {
                 processBuffer(orderBuffer, "SHOPEE", summary);
             }
 
-            log.info("✅ Shopee collection completed - Total: {}, API Calls: {}", totalOrders, apiCalls);
+            summary.setTotalApiCalls(apiCalls);
+            log.info("✅ Shopee collection completed - Total: {}, Filtered: {}, API Calls: {}",
+                    totalOrders, filteredOrders, apiCalls);
+
             return summary;
 
         } catch (Exception e) {

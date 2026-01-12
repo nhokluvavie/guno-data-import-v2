@@ -36,11 +36,11 @@ test:
 # ================================
 platform:
   facebook:
-    enabled: true
+    enabled: false
   tiktok:
     enabled: false
   shopee:
-    enabled: false
+    enabled: true
 
 # Test API Configuration - Use unified date
 api:

@@ -2,10 +2,10 @@ package com.guno.dataimport.test;
 
 import com.guno.dataimport.DataImportApplication;
 import com.guno.dataimport.api.client.ShopeeApiClient;
-import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ProcessingResult;
-import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
+import com.guno.dataimport.dto.platform.shopee.ShopeeApiResponse;
+import com.guno.dataimport.dto.platform.shopee.ShopeeOrderDto;
 import com.guno.dataimport.processor.BatchProcessor;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
@@ -23,9 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 
 /**
- * Shopee Integration Test - Full day data processing with pagination
- * SIMPLIFIED: Single test case for complete daily data import
- * REUSES: FacebookApiResponse (same JSON structure as Facebook)
+ * Shopee Integration Test - CLEAN VERSION
+ * ✅ Uses ShopeeApiResponse (not FacebookApiResponse)
+ * Pattern: Identical to TikTokIntegrationTest
  */
 @SpringBootTest(classes = DataImportApplication.class)
 @ActiveProfiles("test")
@@ -58,6 +58,7 @@ class ShopeeIntegrationTest {
         List<Object> allOrders = new ArrayList<>();
         int currentPage = 1;
         int totalApiCalls = 0;
+        int filteredOrders = 0;
         boolean hasMoreData = true;
 
         try {
@@ -66,7 +67,7 @@ class ShopeeIntegrationTest {
             while (hasMoreData) {
                 log.info("   📡 Calling Shopee API - Page: {}, PageSize: {}", currentPage, pageSize);
 
-                FacebookApiResponse response = shopeeApiClient.fetchOrders(testDate, currentPage, pageSize);
+                ShopeeApiResponse response = shopeeApiClient.fetchOrders(testDate, currentPage, pageSize);
                 totalApiCalls++;
 
                 if (response == null || response.getCode() != 200) {
@@ -75,93 +76,87 @@ class ShopeeIntegrationTest {
                     break;
                 }
 
-                if (response.getData() == null || response.getData().getOrders() == null
-                        || response.getData().getOrders().isEmpty()) {
-                    log.info("   ✅ No more Shopee data at page {}", currentPage);
-                    break;
-                }
-
-                int pageOrders = response.getData().getOrders().size();
-                allOrders.addAll(response.getData().getOrders().stream()
-                        .map(order -> (Object) order)
-                        .toList());
-
-                log.info("   📦 Shopee Page {} collected: {} orders", currentPage, pageOrders);
-
-                // Check if this is the last page
-                if (pageOrders < pageSize) {
-                    log.info("   🏁 Last page detected (got {} < {})", pageOrders, pageSize);
+                if (!response.hasOrders()) {
+                    log.info("   ✅ No more data at page {} - Stopping pagination", currentPage);
                     hasMoreData = false;
                 } else {
+                    int pageOrderCount = response.getOrderCount();
+
+                    // ✅ CLEAN: Direct access to ShopeeOrderDto
+                    List<ShopeeOrderDto> validOrders = response.getOrders().stream()
+                            .filter(ShopeeOrderDto::hasShopeeData)  // Filter out null shopee_data
+                            .toList();
+
+                    int failedCount = pageOrderCount - validOrders.size();
+                    if (failedCount > 0) {
+                        log.warn("   ⚠️ Filtered out {} orders with null shopee_data", failedCount);
+                        filteredOrders += failedCount;
+                    }
+
+                    allOrders.addAll(validOrders);
+
+                    log.info("   📦 Page {} collected: {} orders (Valid: {}, Filtered: {}, Total: {})",
+                            currentPage, pageOrderCount, validOrders.size(), failedCount, allOrders.size());
+
+                    // Check if we reached the end
+                    if (pageOrderCount < pageSize) {
+                        log.info("   ✅ Partial page detected - Last page reached");
+                        hasMoreData = false;
+                    }
+
                     currentPage++;
+                }
+
+                // Safety limit to prevent infinite loops
+                if (currentPage > 100) {
+                    log.warn("   ⚠️ Safety limit reached (100 pages) - Stopping");
+                    break;
                 }
             }
 
-            log.info("📊 Shopee Collection Summary:");
-            log.info("   - Total API Calls: {}", totalApiCalls);
-            log.info("   - Total Orders: {}", allOrders.size());
-            log.info("   - Pages Processed: {}", currentPage);
+            long collectionTime = System.currentTimeMillis() - startTime;
+            log.info("📊 Collection Summary:");
+            log.info("   Total Orders: {}", allOrders.size());
+            log.info("   Filtered: {}", filteredOrders);
+            log.info("   API Calls: {}", totalApiCalls);
+            log.info("   Collection Time: {}ms", collectionTime);
 
-            // Step 2: Process all collected data (TikTok orders go to tbl_customer with segment='TIKTOK')
-            log.info("🔄 Step 2: Processing Shopee Data");
-            ProcessingResult result = null;
-
+            // Step 2: Process all collected data
             if (!allOrders.isEmpty()) {
+                log.info("🔄 Step 2: Processing {} orders", allOrders.size());
+
                 CollectedData collectedData = new CollectedData();
-                collectedData.setShopeeOrders(allOrders); // Set as TikTok orders for proper mapping
+                collectedData.setShopeeOrders(allOrders);
 
-                long processingStart = System.currentTimeMillis();
-                result = batchProcessor.processCollectedData(collectedData);
-                long processingDuration = System.currentTimeMillis() - processingStart;
+                long processingStartTime = System.currentTimeMillis();
+                ProcessingResult result = batchProcessor.processCollectedData(collectedData);
+                long processingTime = System.currentTimeMillis() - processingStartTime;
 
-                log.info("   📋 Shopee processing completed in {}ms", processingDuration);
-                log.info("   💾 Records processed: {}", result.getSuccessCount());
-                log.info("   ❌ Failed records: {}", result.getFailedCount());
-                log.info("   🎯 Platform: Shopee (customer_segment='SHOPEE')");
-            } else {
-                log.info("   ⚠️ No Shopee data to process");
-            }
+                log.info("✅ Processing Complete:");
+                log.info("   Success: {}", result.getSuccessCount());
+                log.info("   Failed: {}", result.getFailedCount());
+                log.info("   Processing Time: {}ms", processingTime);
+                log.info("   Success Rate: {}%", result.getSuccessRate());
 
-            // Step 3: Final Results
-            long totalDuration = System.currentTimeMillis() - startTime;
-            log.info("=".repeat(60));
-            log.info("✅ SHOPEE FINAL RESULTS:");
-            log.info("   Date Processed: {}", testDate);
-            log.info("   Total Duration: {}ms ({:.1f}s)", totalDuration, totalDuration / 1000.0);
-            log.info("   Shopee API Performance:");
-            log.info("     - Total Calls: {}", totalApiCalls);
-            log.info("     - Avg per Call: {:.1f}ms", totalApiCalls > 0 ? (double) totalDuration / totalApiCalls : 0);
-            log.info("   Shopee Data Summary:");
-            log.info("     - Orders Collected: {}", allOrders.size());
-            log.info("     - Orders Processed: {}", result != null ? result.getSuccessCount() : 0);
-            log.info("     - Success Rate: {}%", calculateSuccessRate(result, allOrders.size()));
-            log.info("   Shopee Features:");
-            log.info("     - Customer Segment: 'SHOPEE'");
-            log.info("     - Shop ID Prefix: 'SHOPEE_'");
-            log.info("     - Product ID Prefix: 'SP_'");
-            log.info("     - Payment Provider: 'SHOPEE_PAY'");
-            log.info("     - Shipping Provider: 'Shopee Shop Logistics'");
-            log.info("   Status: {}", allOrders.size() > 0 ? "SUCCESS ✅" : "NO_DATA ⚠️");
-            log.info("=".repeat(60));
-
-            // Assertions
-            assertThat(totalApiCalls).isGreaterThan(0);
-            if (allOrders.size() > 0) {
+                // Assertions
                 assertThat(result).isNotNull();
-                assertThat(result.getSuccessCount()).isGreaterThanOrEqualTo(0);
+                assertThat(result.getTotalProcessed()).isEqualTo(allOrders.size());
+                assertThat(result.getSuccessCount()).isGreaterThan(0);
+            } else {
+                log.warn("⚠️ No orders collected - Skipping processing");
             }
+
+            // Final summary
+            long totalTime = System.currentTimeMillis() - startTime;
+            log.info("=".repeat(60));
+            log.info("🎉 TEST COMPLETED");
+            log.info("Total Time: {}ms | Orders: {} | API Calls: {}",
+                    totalTime, allOrders.size(), totalApiCalls);
+            log.info("=".repeat(60));
 
         } catch (Exception e) {
-            log.error("❌ Shopee test failed: {}", e.getMessage(), e);
-            fail("Shopee integration test failed: " + e.getMessage());
+            log.error("❌ Test failed with exception", e);
+            fail("Test failed: " + e.getMessage());
         }
-    }
-
-    private String calculateSuccessRate(ProcessingResult result, int totalOrders) {
-        if (result == null || totalOrders == 0) {
-            return "N/A";
-        }
-        double rate = ((double) result.getSuccessCount() / totalOrders) * 100;
-        return String.format("%.1f", rate);
     }
 }

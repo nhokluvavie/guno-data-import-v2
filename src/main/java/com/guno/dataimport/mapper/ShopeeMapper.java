@@ -1,130 +1,133 @@
 package com.guno.dataimport.mapper;
 
-import com.guno.dataimport.dto.platform.facebook.AdvancedPlatformFee;
-import com.guno.dataimport.dto.platform.facebook.FacebookCustomer;
-import com.guno.dataimport.dto.platform.facebook.FacebookItemDto;
-import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
+import com.guno.dataimport.dto.platform.shopee.*;
 import com.guno.dataimport.entity.*;
 import com.guno.dataimport.util.GeographyHelper;
 import com.guno.dataimport.util.KeyGenerator;
 import com.guno.dataimport.util.OrderStatusValidator;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
+import java.time.temporal.WeekFields;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Shopee Mapper - Convert Facebook DTOs to Database Entities
- * IMPROVED: Better null handling, more accurate mapping, simplified logic
+ * Shopee Mapper - CORRECTED VERSION
+ * All entity field names verified and corrected
  */
 @Component
 @Slf4j
 public class ShopeeMapper {
-    @Value("${api.shopee.default-date:}")
+
     private static final DateTimeFormatter[] DATE_FORMATTERS = {
             DateTimeFormatter.ISO_DATE_TIME,
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
     };
 
+    // Status codes
+    private static final Long STATUS_NEW = 0L;
+    private static final Long STATUS_CONFIRMED = 1L;
+    private static final Long STATUS_SHIPPED = 2L;
+    private static final Long STATUS_DELIVERED = 3L;
+    private static final Long STATUS_RETURNED = 4L;
+    private static final Long STATUS_CANCELED = 6L;
+    private static final Long STATUS_PACKAGING = 8L;
+
     // ================================
-    // CUSTOMER MAPPING
+    // 1. CUSTOMER MAPPING
     // ================================
 
-    public Customer mapToCustomer(FacebookOrderDto order) {
-        if (order == null) return null;
+    public Customer mapToCustomer(ShopeeOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) return null;
 
-        if (order.getCustomer() == null) {
-            return Customer.builder()
-                    .customerId("GUEST_" + order.getOrderId())
-                    .customerKey(0L)
-                    .platformCustomerId("GUEST")
-                    .customerSegment("GUEST")
-                    .customerTier("GUEST")
-                    .acquisitionChannel("SHOPEE")
-                    .preferredPlatform("SHOPEE")
-                    .build();
-        }
-
-        FacebookCustomer fbCustomer = order.getCustomer();
-        String customerId = fbCustomer.getCustomerId() != null ? fbCustomer.getCustomerId() : fbCustomer.getId();
+        ShopeeOrderDetail detail = order.getOrderDetail();
+        ShopeeRecipientAddress address = detail.getRecipientAddress();
+        String customerId = extractCustomerId(order);
 
         return Customer.builder()
                 .customerId(customerId)
-                .customerKey(generateKey(customerId))
+                .customerKey((long) customerId.hashCode())
                 .platformCustomerId(customerId)
-                .phoneHash(fbCustomer.getPrimaryPhone())  // Keep original phone
-                .emailHash(fbCustomer.getPrimaryEmail())  // Keep original email
-                .gender(fbCustomer.getGender())
+                .phoneHash(address != null ? address.getPhone() : "")
+                .emailHash("")
+                .gender("")
                 .ageGroup("")
                 .customerSegment("SHOPEE")
                 .customerTier("STANDARD")
                 .acquisitionChannel("SHOPEE")
-                .firstOrderDate(parseDateTime(fbCustomer.getInsertedAt()))
-                .lastOrderDate(parseDateTime(fbCustomer.getLastOrderAt()))
-                .totalOrders(safeInt(fbCustomer.getOrderCount()))
-                .totalSpent(safeDouble(fbCustomer.getPurchasedAmount()))
-                .averageOrderValue(calculateAov(fbCustomer))
-                .totalItemsPurchased(0)
+                .firstOrderDate(timestampToDateTime(detail.getCreateTime()))
+                .lastOrderDate(timestampToDateTime(detail.getUpdateTime()))
+                .totalOrders(1)
+                .totalSpent(detail.getTotalAmountAsDouble())
+                .averageOrderValue(detail.getTotalAmountAsDouble())
+                .totalItemsPurchased(detail.getItemCount())
                 .daysSinceFirstOrder(0)
                 .daysSinceLastOrder(0)
                 .purchaseFrequencyDays(0.0)
                 .returnRate(0.0)
                 .cancellationRate(0.0)
-                .codPreferenceRate(0.0)
+                .codPreferenceRate(detail.isCodOrder() ? 1.0 : 0.0)
                 .favoriteCategory("")
                 .favoriteBrand("")
-                .preferredPaymentMethod("")
+                .preferredPaymentMethod(detail.getPaymentMethod())
                 .preferredPlatform("SHOPEE")
-                .primaryShippingProvince("")
+                .primaryShippingProvince(address != null ? address.getState() : "")
                 .shipsToMultipleProvinces(false)
-                .loyaltyPoints(safeInt(fbCustomer.getRewardPoint()))
-                .referralCount(safeInt(fbCustomer.getCountReferrals()))
-                .isReferrer(safeBool(fbCustomer.getIsReferrer()))
-                .customerName(fbCustomer.getName())
+                .loyaltyPoints(0)
+                .referralCount(0)
+                .isReferrer(false)
+                .customerName(address != null ? address.getName() : "")
                 .build();
     }
 
     // ================================
-    // ORDER MAPPING
+    // 2. ORDER MAPPING - CORRECTED
     // ================================
 
-    public Order mapToOrder(FacebookOrderDto order) {
-        if (order == null) return null;
+    public Order mapToOrder(ShopeeOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) return null;
+
+        ShopeeOrderDetail detail = order.getOrderDetail();
+        ShopeeOrderReturn returnInfo = order.getOrderReturn();
+
+        Double totalAmount = detail.getTotalAmountAsDouble();
+        Double shippingFee = detail.getActualShippingFeeAsDouble();
 
         return Order.builder()
-                .orderId(order.getOrderId())
+                .orderId(order.getOrderIdSafe())
                 .customerId(extractCustomerId(order))
-                .shopId(order.getAccountName())
+                .shopId("SHOPEE_" + order.getShopId())
                 .internalUuid("SHOPEE")
                 .orderCount(1)
-                .itemQuantity(calculateTotalQuantity(order))
-                .totalItemsInOrder(order.getItems().size())
-                .grossRevenue(safeDouble(order.getTotalPriceAfterSubDiscount()))
-                .netRevenue(safeDouble(order.getTotalPriceAfterSubDiscount()))
-                .shippingFee(safeDouble(order.getShippingFee()))
-                .taxAmount(safeDouble(order.getTax()))
-                .discountAmount(safeDouble(order.getDiscount()))
-                .codAmount(safeDouble(order.getCod()))
-                .platformFee(calculatePlatformFee(order))
+                .itemQuantity(detail.getItemCount())
+                .totalItemsInOrder(detail.getItemCount())
+                .grossRevenue(totalAmount)
+                .netRevenue(totalAmount)
+                .shippingFee(shippingFee)
+                .taxAmount(0.0)
+                .discountAmount(0.0)
+                .codAmount(detail.isCodOrder() ? totalAmount : 0.0)
+                // ✅ REMOVED: .finalAmount() - không tồn tại
+                // ✅ REMOVED: .isOnlinePayment() - không tồn tại
+                .isCod(detail.isCodOrder())
+                .platformFee(0.0)
                 .sellerDiscount(0.0)
-                .platformDiscount(safeDouble(order.getDiscount()))
-                .originalPrice(safeDouble(order.getTotalPriceAfterSubDiscount()))
-                .estimatedShippingFee(safeDouble(order.getShippingFee()))
-                .actualShippingFee(safeDouble(order.getShippingFee()))
-                .shippingWeightGram(0)
-                .daysToShip(0)
+                .platformDiscount(0.0)
+                .originalPrice(totalAmount)
+                .estimatedShippingFee(safeDouble(detail.getEstimatedShippingFee()))
+                .actualShippingFee(shippingFee)
+                .shippingWeightGram(safeInt(detail.getOrderChargeableWeightGram()))
+                .daysToShip(safeInt(detail.getDaysToShip()))
                 .isDelivered(OrderStatusValidator.isDelivered(order, "SHOPEE"))
                 .isCancelled(OrderStatusValidator.isCancelled(order, "SHOPEE"))
                 .isReturned(OrderStatusValidator.isReturned(order, "SHOPEE"))
-                .isCod(order.isCodOrder())
-                .isNewCustomer(false)
+                .isNewCustomer(true)
                 .isRepeatCustomer(false)
                 .isBulkOrder(false)
                 .isPromotionalOrder(false)
@@ -132,151 +135,168 @@ public class ShopeeMapper {
                 .orderToShipHours(0)
                 .shipToDeliveryHours(0)
                 .totalFulfillmentHours(0)
-                .customerOrderSequence(0)
-                .customerLifetimeOrders(0)
-                .customerLifetimeValue(0.0)
+                .customerOrderSequence(1)
+                .customerLifetimeOrders(1)
+                .customerLifetimeValue(totalAmount)
                 .daysSinceLastOrder(0)
-                .promotionImpact(safeDouble(order.getDiscount()))
-                .adRevenue(hasAd(order) ? safeDouble(order.getTotalPriceAfterSubDiscount()) : 0.0)
-                .organicRevenue(!hasAd(order) ? safeDouble(order.getTotalPriceAfterSubDiscount()) : 0.0)
-                .aov(safeDouble(order.getTotalPriceAfterSubDiscount()))
-                .shippingCostRatio(calculateShippingRatio(order))
-                .createdAt(order.getCreatedAt())
-                .orderSource("UNKNOWN")
-                .platformSpecificData(0)
-                .sellerId(extractSellerId(order))
-                .sellerName(extractSellerName(order))
-                .sellerEmail(extractSellerEmail(order))
+                .promotionImpact(0.0)
+                .adRevenue(0.0)
+                .organicRevenue(totalAmount)
+                .aov(totalAmount)
+                .shippingCostRatio(totalAmount > 0 ? shippingFee / totalAmount : 0.0)
+                .createdAt(order.getInsertedAt())
+                .orderSource("SHOPEE")
+                // ✅ FIXED: platformSpecificData phải là Integer
+                .platformSpecificData(order.getStatus() != null ? order.getStatus() : 0)
+                .sellerId("SHOPEE")
+                .sellerName("Shopee")
+                .sellerEmail("shopee@shop.com")
+                .latestStatus(mapShopeeToLatestStatus(order))
+                .isRefunded(returnInfo != null)
+                .refundAmount(returnInfo != null ? returnInfo.getRefundAmountAsDouble() : 0.0)
+                .refundDate(returnInfo != null && returnInfo.getUpdateTime() != null ?
+                        timestampToDateTime(returnInfo.getUpdateTime()).toString() : "")
+                .isExchanged(false)
+                .cancelReason(detail.getCancelReason())
+                .cancelTime(detail.getCancelBy() != null && !detail.getCancelBy().isEmpty() && detail.getUpdateTime() != null ?
+                        timestampToDateTime(detail.getUpdateTime()).toString() : "")
+                .orderDt(order.getInsertedAt() != null ? order.getInsertedAt().toLocalDate().toString() : "")
                 .build();
     }
 
-    private boolean isOrderReturned(FacebookOrderDto order) {
-        if (order == null || order.getTrackingHistories() == null) {
-            return false;
-        }
-        return order.getTrackingHistories()
-                .stream()
-                .anyMatch(h -> "returned".equalsIgnoreCase(h.getPartnerStatus()));
-    }
-
     // ================================
-    // ORDER ITEM MAPPING
+    // 3. ORDER ITEMS MAPPING - CORRECTED
     // ================================
 
-    public List<OrderItem> mapToOrderItems(FacebookOrderDto order) {
-        if (order == null || order.getItems() == null) return new ArrayList<>();
+    public List<OrderItem> mapToOrderItems(ShopeeOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) return new ArrayList<>();
+
+        ShopeeOrderDetail detail = order.getOrderDetail();
+        if (!detail.hasItems()) return new ArrayList<>();
 
         List<OrderItem> items = new ArrayList<>();
         AtomicInteger sequence = new AtomicInteger(1);
 
-        for (FacebookItemDto item : order.getItems()) {
-            int qty = safeInt(item.getQuantity());
-            double price = item.getPriceAsDouble();
+        for (ShopeeItem item : detail.getItemList()) {
+            int qty = item.getQuantity();
+            double price = item.getDiscountedPriceAsDouble();
 
             items.add(OrderItem.builder()
-                    .orderId(order.getOrderId())
-                    .sku(getSku(item))
-                    .platformProductId("SP_" + item.getId())
+                    .orderId(order.getOrderIdSafe())
+                    .sku(item.getSkuOrDefault())
+                    .platformProductId("SHOPEE_" + item.getItemId())
                     .quantity(qty)
                     .unitPrice(price)
                     .totalPrice(price * qty)
-                    .itemDiscount(safeDouble(item.getTotalDiscount()))
-                    .promotionType(null)
-                    .promotionCode(null)
+                    .itemDiscount(item.getOriginalPriceAsDouble() - item.getDiscountedPriceAsDouble())
+                    // ✅ REMOVED: .finalItemPrice() - không tồn tại
+                    .promotionType(item.getPromotionType())
+                    .promotionCode(item.getPromotionId() != null ? item.getPromotionId().toString() : null)
                     .itemStatus(null)
                     .itemSequence(sequence.getAndIncrement())
-                    .opId((long) item.getId().hashCode())
+                    .opId((long) item.getItemId().hashCode())
                     .build());
         }
         return items;
     }
 
     // ================================
-    // PRODUCT MAPPING
+    // 4. PRODUCTS MAPPING
     // ================================
 
-    public List<Product> mapToProducts(FacebookOrderDto order) {
-        if (order == null || order.getItems() == null) return new ArrayList<>();
+    public List<Product> mapToProducts(ShopeeOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) return new ArrayList<>();
+
+        ShopeeOrderDetail detail = order.getOrderDetail();
+        if (!detail.hasItems()) return new ArrayList<>();
 
         List<Product> products = new ArrayList<>();
-        for (FacebookItemDto item : order.getItems()) {
+
+        for (ShopeeItem item : detail.getItemList()) {
+            String sku = item.getSkuOrDefault();
+
             products.add(Product.builder()
-                    .sku(getSku(item))
-                    .platformProductId("SP_" + item.getId())
-                    .productId(item.getProductId())
-                    .variationId(item.getVariationId())
-                    .barcode(getBarcode(item))
-                    .productName(getName(item))
-                    .color(getFieldValue(item, "Màu"))
-                    .size(getFieldValue(item, "Size"))
-                    .weightGram(getWeight(item))
-                    .retailPrice(item.getPriceAsDouble())
-                    .originalPrice(item.getPriceAsDouble())
-                    .priceRange(getPriceRange(item.getPriceAsDouble()))
-                    .primaryImageUrl(getImageUrl(item))
-                    .imageCount(getImageCount(item))
-                    .skuGroup(getSkuGroup(item))
+                    .sku(sku)
+                    .platformProductId("SHOPEE_" + item.getItemId())
+                    .productId(item.getItemId().toString())
+                    .variationId(item.getModelId() != null ? item.getModelId().toString() : "")
+                    .barcode("")
+                    .productName(item.getItemName())
+                    .color(extractColorFromModelName(item.getModelName()))
+                    .size(extractSizeFromModelName(item.getModelName()))
+                    .weightGram(item.getWeight() != null ? (int)(item.getWeight() * 1000) : 0)
+                    .retailPrice(item.getDiscountedPriceAsDouble())
+                    .originalPrice(item.getOriginalPriceAsDouble())
+                    .priceRange(getPriceRange(item.getDiscountedPriceAsDouble()))
+                    .primaryImageUrl(item.getImageInfo() != null ? item.getImageInfo().getImageUrl() : "")
+                    .imageCount(item.getImageInfo() != null ? 1 : 0)
+                    .skuGroup(extractSkuGroup(sku))
                     .build());
         }
         return products;
     }
 
     // ================================
-    // GEOGRAPHY MAPPING
+    // 5. GEOGRAPHY MAPPING
     // ================================
 
-    public GeographyInfo mapToGeographyInfo(FacebookOrderDto order) {
-        if (order == null) return null;
+    public GeographyInfo mapToGeographyInfo(ShopeeOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) return null;
 
-        String province = order.getProvinceSafe();
-        String district = order.getDistrictSafe();
+        ShopeeOrderDetail detail = order.getOrderDetail();
+        ShopeeRecipientAddress address = detail.getRecipientAddress();
+
+        String province = address != null ? address.getState() : "Unknown";
+        String district = address != null ? address.getCity() : "Unknown";
 
         return GeographyInfo.builder()
-                .orderId(order.getOrderId())
+                .orderId(order.getOrderIdSafe())
                 .geographyKey(KeyGenerator.generateGeographyKey(province, district))
                 .countryCode("VN")
                 .countryName("Vietnam")
+                .regionCode("")
+                .regionName("")
+                .provinceCode("")
                 .provinceName(province)
+                .provinceType("")
+                .districtCode("")
                 .districtName(district)
+                .districtType("")
+                .wardCode("")
+                .wardName(address != null ? address.getDistrict() : "")
+                .wardType("")
                 .isUrban(GeographyHelper.isUrbanProvince(province))
                 .isMetropolitan(GeographyHelper.isMetroProvince(province))
+                .isCoastal(false)
+                .isBorder(false)
                 .economicTier(GeographyHelper.getEconomicTier(province))
+                .populationDensity("")
+                .incomeLevel("")
                 .shippingZone(GeographyHelper.getShippingZone(province))
+                .deliveryComplexity("")
                 .standardDeliveryDays(GeographyHelper.getDeliveryDays(province))
                 .expressDeliveryAvailable(true)
                 .latitude(0.0)
                 .longitude(0.0)
-                .regionCode("")
-                .regionName("")
-                .provinceCode("")
-                .provinceType("")
-                .districtCode("")
-                .districtType("")
-                .wardCode("")
-                .wardName("")
-                .wardType("")
-                .isCoastal(false)
-                .isBorder(false)
-                .populationDensity("")
-                .incomeLevel("")
-                .deliveryComplexity("")
                 .build();
     }
 
     // ================================
-    // PAYMENT MAPPING
+    // 6. PAYMENT MAPPING
     // ================================
 
-    public PaymentInfo mapToPaymentInfo(FacebookOrderDto order) {
-        if (order == null) return null;
+    public PaymentInfo mapToPaymentInfo(ShopeeOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) return null;
 
-        boolean isCod = order.isCodOrder();
+        ShopeeOrderDetail detail = order.getOrderDetail();
+        boolean isCod = detail.isCodOrder();
         String method = isCod ? "COD" : "ONLINE";
         String provider = isCod ? "CASH" : "SHOPEE_PAY";
         String category = isCod ? "CASH_ON_DELIVERY" : "ONLINE_PAYMENT";
 
         return PaymentInfo.builder()
-                .orderId(order.getOrderId())
+                .orderId(order.getOrderIdSafe())
+                // ✅ SYNCED WITH TIKTOK/FACEBOOK
                 .paymentKey(KeyGenerator.generatePaymentKey(method, provider, category))
                 .paymentMethod(method)
                 .paymentCategory(category)
@@ -299,110 +319,70 @@ public class ShopeeMapper {
     }
 
     // ================================
-    // SHIPPING MAPPING
+    // 7. SHIPPING MAPPING - CORRECTED
     // ================================
 
-    public ShippingInfo mapToShippingInfo(FacebookOrderDto order) {
-        if (order == null) return null;
+    public ShippingInfo mapToShippingInfo(ShopeeOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) return null;
 
-        String providerId = "SHOPEE_LOGISTICS";
-        String serviceType = "STANDARD";
+        ShopeeOrderDetail detail = order.getOrderDetail();
 
         return ShippingInfo.builder()
-                .orderId(order.getOrderId())
-                .shippingKey(KeyGenerator.generateShippingKey(providerId, serviceType))
-                .providerId(providerId)
-                .providerName("Shopee Logistics")
-                .providerType("MARKETPLACE")
+                .orderId(order.getOrderIdSafe())
+                .shippingKey(generateKey(order.getOrderIdSafe() + "_shipping"))
+                // ✅ CORRECTED: shippingProvider → providerName
+                .providerId("SHOPEE_" + detail.getShippingCarrier())
+                .providerName(detail.getShippingCarrier())
+                .providerType("THIRD_PARTY")
                 .providerTier("STANDARD")
-                .serviceType(serviceType)
-                .serviceTier("STANDARD")
+                .serviceType("STANDARD")
+                .serviceTier("ECONOMY")
                 .deliveryCommitment("")
                 .shippingMethod("STANDARD")
                 .pickupType("")
                 .deliveryType("")
-                .baseFee(safeDouble(order.getShippingFee()))
+                // ✅ REMOVED: trackingNumber, trackingUrl, shippingStatus - không tồn tại
+                .baseFee(detail.getActualShippingFeeAsDouble())
                 .weightBasedFee(0.0)
                 .distanceBasedFee(0.0)
                 .codFee(0.0)
                 .insuranceFee(0.0)
-                .supportsCod(order.isCodOrder())
+                .supportsCod(detail.isCodOrder())
                 .supportsInsurance(false)
                 .supportsFragile(false)
                 .supportsRefrigerated(false)
-                .providesTracking(false)
+                .providesTracking(true)
                 .providesSmsUpdates(false)
-                .averageDeliveryDays(0.0)
+                .averageDeliveryDays((double) safeInt(detail.getDaysToShip()))
                 .onTimeDeliveryRate(0.0)
                 .successDeliveryRate(0.0)
                 .damageRate(0.0)
-                .coverageProvinces(getProvinceName(order))
+                .coverageProvinces(detail.getProvince())
                 .coverageNationwide(false)
                 .coverageInternational(false)
                 .build();
     }
 
     // ================================
-    // ORDER STATUS MAPPING
+    // 8. PROCESSING DATE MAPPING
     // ================================
 
-    public List<OrderStatus> mapToOrderStatus(FacebookOrderDto order) {
-        if (order == null) return new ArrayList<>();
-
-        List<OrderStatus> orderStatuses = new ArrayList<>();
-        Integer currentStatus = order.getStatus();
-
-        if (currentStatus != null) {
-            String subStatusId = extractSubStatusId(order);
-            Integer partnerStatusId = extractPartnerStatusId(order);
-
-            OrderStatus orderStatus = OrderStatus.builder()
-                    .statusKey((long) currentStatus)
-                    .orderId(order.getOrderId())
-                    .subStatusId(subStatusId)
-                    .partnerStatusId(partnerStatusId)
-                    .transitionDateKey(getCurrentDateKey())
-                    .transitionTimestamp(order.getInsertedAt())
-                    .durationInPreviousStatusHours(0)
-                    .transitionReason("ORDER_CREATED")
-                    .transitionTrigger("SYSTEM")
-                    .changedBy("SHOPEE_API")
-                    .isOnTimeTransition(true)
-                    .isExpectedTransition(true)
-                    .historyKey(generateKey("HIST_" + order.getOrderId()))
-                    .createdAt(String.valueOf(order.getInsertedAt()))
-                    .build();
-            orderStatuses.add(orderStatus);
-        }
-
-        return orderStatuses;
-    }
-
-    // ================================
-    // PROCESSING DATE MAPPING
-    // ================================
-
-    public ProcessingDateInfo mapToProcessingDateInfo(FacebookOrderDto order) {
+    public ProcessingDateInfo mapToProcessingDateInfo(ShopeeOrderDto order) {
         if (order == null) return null;
 
         LocalDateTime orderDate = order.getInsertedAt();
-        if (orderDate == null) {
-            orderDate = LocalDateTime.now();
-        }
+        if (orderDate == null) return null;
 
         return ProcessingDateInfo.builder()
-                .orderId(order.getOrderId())
+                .orderId(order.getOrderIdSafe())
                 .dateKey(generateDateKey(orderDate))
                 .fullDate(orderDate.toLocalDate().toString())
                 .dayOfWeek(orderDate.getDayOfWeek().getValue())
                 .dayOfWeekName(orderDate.getDayOfWeek().name())
-                .dayOfMonth(orderDate.getDayOfMonth())
-                .dayOfYear(orderDate.getDayOfYear())
-                .weekOfYear(orderDate.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear()))
+                .weekOfYear(orderDate.get(WeekFields.of(Locale.getDefault()).weekOfWeekBasedYear()))
                 .monthOfYear(orderDate.getMonthValue())
                 .monthName(orderDate.getMonth().name())
-                .quarterOfYear((orderDate.getMonthValue() - 1) / 3 + 1)
-                .quarterName("Q" + ((orderDate.getMonthValue() - 1) / 3 + 1))
+                .quarterOfYear(((orderDate.getMonthValue() - 1) / 3 + 1))
                 .year(orderDate.getYear())
                 .isWeekend(orderDate.getDayOfWeek().getValue() >= 6)
                 .isHoliday(false)
@@ -414,112 +394,111 @@ public class ShopeeMapper {
     }
 
     // ================================
-    // HELPER METHODS - SELLER EXTRACTION
+    // 9. ORDER STATUS MAPPING - CORRECTED
     // ================================
 
-    private String extractSellerId(FacebookOrderDto order) {
-        if (order.getAssigningSeller() != null && order.getAssigningSeller().getId() != null) {
-            return order.getAssigningSeller().getId();
-        }
-        return "UNKNOWN";
-    }
+    public List<OrderStatus> mapToOrderStatus(ShopeeOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) return new ArrayList<>();
 
-    private String extractSellerName(FacebookOrderDto order) {
-        if (order.getAssigningSeller() != null && order.getAssigningSeller().getName() != null) {
-            return order.getAssigningSeller().getName();
-        }
-        if (order.getAccountName() != null && !order.getAccountName().trim().isEmpty()) {
-            return order.getAccountName().trim();
-        }
-        return "UNKNOWN";
-    }
+        List<OrderStatus> orderStatuses = new ArrayList<>();
+        Long currentStatus = mapShopeeToLatestStatus(order);
 
-    private String extractSellerEmail(FacebookOrderDto order) {
-        if (order.getAssigningSeller() != null && order.getAssigningSeller().getEmail() != null) {
-            return order.getAssigningSeller().getEmail();
-        }
-        return "UNKNOWN";
+        OrderStatus orderStatus = OrderStatus.builder()
+                .statusKey(currentStatus)
+                .orderId(order.getOrderIdSafe())
+                .subStatusId("0")  // ✅ REQUIRED
+                .partnerStatusId(0)  // ✅ REQUIRED
+                .transitionDateKey(getCurrentDateKey())
+                .transitionTimestamp(order.getInsertedAt())
+                // ✅ CORRECTED: statusDuration → durationInPreviousStatusHours (Integer)
+                .durationInPreviousStatusHours(0)
+                // ✅ REMOVED: previousStatusKey, isCurrentStatus - không tồn tại
+                // ✅ CORRECTED: statusReason → transitionReason
+                .transitionReason("")
+                .transitionTrigger("SYSTEM")
+                // ✅ CORRECTED: modifiedBy → changedBy
+                .changedBy("SYSTEM")
+                .isOnTimeTransition(true)
+                .isExpectedTransition(true)
+                .historyKey(0L)
+                // ✅ CORRECTED: modifiedAt → createdAt (String)
+                .createdAt(order.getInsertedAt() != null ? order.getInsertedAt().toString() : "")
+                .build();
+
+        orderStatuses.add(orderStatus);
+        return orderStatuses;
     }
 
     // ================================
-    // HELPER METHODS - STATUS
+    // HELPER METHODS - STATUS MAPPING
     // ================================
 
-    private String extractSubStatusId(FacebookOrderDto order) {
-        Integer subStatus = order.getSubStatus();
-        return subStatus != null ? subStatus.toString() : "0";
-    }
+    private Long mapShopeeToLatestStatus(ShopeeOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) return STATUS_NEW;
 
-    private Integer extractPartnerStatusId(FacebookOrderDto order) {
-        if (order.getTrackingHistories() == null || order.getTrackingHistories().isEmpty()) {
-            return 0;
+        // Priority 1: Return
+        if (order.hasOrderReturn()) {
+            return STATUS_RETURNED;
         }
 
-        String partnerStatus = order.getTrackingHistories().get(0).getPartnerStatus();
-        if (partnerStatus == null) return 0;
+        // Priority 2: Order Status
+        String orderStatus = order.getShopeeOrderStatus();
+        if (orderStatus == null) return STATUS_NEW;
 
-        return switch (partnerStatus.toLowerCase()) {
-            case "pending" -> 1;
-            case "picking_up" -> 2;
-            case "picked_up" -> 3;
-            case "on_delivery" -> 4;
-            case "delivered" -> 5;
-            case "undeliverable" -> 6;
-            case "returning" -> 7;
-            case "returned" -> 8;
-            case "cancelled" -> 9;
-            default -> 0;
+        return switch (orderStatus.toUpperCase()) {
+            case "UNPAID" -> STATUS_NEW;
+            case "PROCESSED" -> STATUS_CONFIRMED;
+            case "READY_TO_SHIP" -> STATUS_PACKAGING;
+            case "SHIPPED" -> STATUS_SHIPPED;
+            case "TO_CONFIRM_RECEIVE", "COMPLETED" -> STATUS_DELIVERED;
+            case "CANCELLED", "IN_CANCEL", "INVALID" -> STATUS_CANCELED;
+            case "TO_RETURN" -> STATUS_RETURNED;
+            default -> STATUS_NEW;
         };
     }
 
     // ================================
-    // HELPER METHODS - ITEM/PRODUCT (FIXED FOR DTO STRUCTURE)
+    // HELPER METHODS - EXTRACTION
     // ================================
 
-    private String getSku(FacebookItemDto item) {
-        if (item.getVariationInfo() != null) {
-            String displayId = item.getVariationInfo().getDisplayId();
-            if (displayId != null && !displayId.trim().isEmpty()) {
-                return displayId.trim();
-            }
+    private String extractCustomerId(ShopeeOrderDto order) {
+        if (order == null || !order.hasOrderDetail()) {
+            return "GUEST_" + order.getOrderIdSafe();
         }
-        return "SKU_" + item.getId();
+
+        ShopeeOrderDetail detail = order.getOrderDetail();
+        ShopeeRecipientAddress address = detail.getRecipientAddress();
+
+        if (address != null && address.getPhone() != null && !address.getPhone().isEmpty()) {
+            return "SHOPEE_" + address.getPhone().hashCode();
+        }
+
+        return "GUEST_" + order.getOrderIdSafe();
     }
 
-    private String getBarcode(FacebookItemDto item) {
-        if (item.getVariationInfo() != null) {
-            String barcode = item.getVariationInfo().getBarcode();
-            return (barcode != null && !barcode.trim().isEmpty()) ? barcode.trim() : null;
-        }
-        return null;
+    private String extractColorFromModelName(String modelName) {
+        if (modelName == null) return "";
+        if (modelName.contains("Đen")) return "Đen";
+        if (modelName.contains("Trắng")) return "Trắng";
+        if (modelName.contains("Xanh")) return "Xanh";
+        if (modelName.contains("Đỏ")) return "Đỏ";
+        if (modelName.contains("Vàng")) return "Vàng";
+        return "";
     }
 
-    private String getName(FacebookItemDto item) {
-        if (item.getVariationInfo() != null) {
-            String name = item.getVariationInfo().getName();
-            if (name != null && !name.trim().isEmpty()) {
-                return name.trim();
-            }
-        }
-        return "Product " + item.getId();
+    private String extractSizeFromModelName(String modelName) {
+        if (modelName == null) return "";
+        if (modelName.contains("M ") || modelName.contains(",M")) return "M";
+        if (modelName.contains("L ") || modelName.contains(",L")) return "L";
+        if (modelName.contains("XL")) return "XL";
+        if (modelName.contains("XXL")) return "XXL";
+        if (modelName.contains("S ") || modelName.contains(",S")) return "S";
+        return "";
     }
 
-    private String getFieldValue(FacebookItemDto item, String fieldName) {
-        if (item.getVariationInfo() == null || item.getVariationInfo().getFields() == null) {
-            return null;
-        }
-        return item.getVariationInfo().getFields().stream()
-                .filter(f -> fieldName.equals(f.getName()))
-                .map(FacebookItemDto.VariationField::getValue)
-                .findFirst()
-                .orElse(null);
-    }
-
-    private int getWeight(FacebookItemDto item) {
-        if (item.getVariationInfo() != null && item.getVariationInfo().getWeight() != null) {
-            return item.getVariationInfo().getWeight();
-        }
-        return 0;
+    private String extractSkuGroup(String sku) {
+        if (sku == null || sku.length() < 5) return sku;
+        return sku.substring(0, Math.min(5, sku.length()));
     }
 
     private String getPriceRange(double price) {
@@ -529,99 +508,9 @@ public class ShopeeMapper {
         return "OVER_1M";
     }
 
-    private String getImageUrl(FacebookItemDto item) {
-        if (item.getVariationInfo() != null && item.getVariationInfo().getImages() != null) {
-            List<String> images = item.getVariationInfo().getImages();
-            if (!images.isEmpty()) {
-                return images.get(0);
-            }
-        }
-        return null;
-    }
-
-    private int getImageCount(FacebookItemDto item) {
-        if (item.getVariationInfo() != null && item.getVariationInfo().getImages() != null) {
-            return item.getVariationInfo().getImages().size();
-        }
-        return 0;
-    }
-
-    // ================================
-    // HELPER METHODS - GEOGRAPHY
-    // ================================
-
-    private String getProvinceName(FacebookOrderDto order) {
-        String province = order.getNewProvinceName();
-        return province != null && !province.trim().isEmpty() ? province.trim() : "Unknown";
-    }
-
     // ================================
     // HELPER METHODS - GENERAL
     // ================================
-
-    private String extractCustomerId(FacebookOrderDto order) {
-        if (order.getCustomer() != null) {
-            String customerId = order.getCustomer().getCustomerId();
-            if (customerId != null) return customerId;
-            return order.getCustomer().getId();
-        }
-        return "GUEST_" + order.getOrderId();
-    }
-
-    private int calculateTotalQuantity(FacebookOrderDto order) {
-        return order.getItems().stream()
-                .mapToInt(item -> safeInt(item.getQuantity()))
-                .sum();
-    }
-
-    private boolean hasAd(FacebookOrderDto order) {
-        String adId = order.getAdId();
-        return adId != null && !adId.trim().isEmpty() && !"null".equalsIgnoreCase(adId);
-    }
-
-    private double calculateShippingRatio(FacebookOrderDto order) {
-        double total = safeDouble(order.getTotalPriceAfterSubDiscount());
-        double shipping = safeDouble(order.getShippingFee());
-        return total > 0 ? (shipping / total) * 100 : 0.0;
-    }
-
-    private double calculateAov(FacebookCustomer customer) {
-        int orders = safeInt(customer.getOrderCount());
-        double revenue = safeDouble(customer.getPurchasedAmount());
-        return orders > 0 ? revenue / orders : 0.0;
-    }
-
-    private LocalDateTime parseDateTime(String dateStr) {
-        if (dateStr == null || dateStr.trim().isEmpty()) {
-            return null;
-        }
-
-        for (DateTimeFormatter formatter : DATE_FORMATTERS) {
-            try {
-                return LocalDateTime.parse(dateStr, formatter);
-            } catch (DateTimeParseException ignored) {
-            }
-        }
-        return null;
-    }
-
-    private Long getCurrentDateKey() {
-        LocalDateTime now = LocalDateTime.now();
-        return Long.parseLong(now.format(DateTimeFormatter.ofPattern("yyyyMMdd")));
-    }
-
-    private Long generateDateKey(LocalDateTime dateTime) {
-        return Long.parseLong(dateTime.format(DateTimeFormatter.ofPattern("yyyyMMdd")));
-    }
-
-    private Long generateKey(String seed) {
-        return (long) Math.abs(seed.hashCode());
-    }
-
-    private boolean isPeakHour(LocalDateTime dateTime) {
-        int hour = dateTime.getHour();
-        return (hour >= 10 && hour <= 14) || (hour >= 18 && hour <= 22);
-    }
 
     private int safeInt(Integer value) {
         return value != null ? value : 0;
@@ -636,33 +525,36 @@ public class ShopeeMapper {
     }
 
     private boolean safeBool(Boolean value) {
-        return value != null && value;
+        return Boolean.TRUE.equals(value);
     }
 
-    private String getSkuGroup(FacebookItemDto item) {
-        if (item.getVariationInfo() != null) {
-            String productDisplayId = item.getVariationInfo().getProductDisplayId();
-            if (productDisplayId != null && !productDisplayId.trim().isEmpty()) {
-                return productDisplayId.trim();
-            }
-        }
-        return null;
+    private Long generateKey(String seed) {
+        return (long) Math.abs(seed.hashCode());
     }
 
-    private double calculatePlatformFee(FacebookOrderDto order) {
-        if (order.getData() == null ||
-                order.getData().getAdvancedPlatformFee() == null) {
-            return 0.0;
+    private Long getCurrentDateKey() {
+        LocalDateTime now = LocalDateTime.now();
+        return Long.parseLong(now.format(DateTimeFormatter.ofPattern("yyyyMMdd")));
+    }
+
+    private Long generateDateKey(LocalDateTime dateTime) {
+        return Long.parseLong(dateTime.format(DateTimeFormatter.ofPattern("yyyyMMdd")));
+    }
+
+    private LocalDateTime timestampToDateTime(Long timestamp) {
+        if (timestamp == null) return null;
+        try {
+            return LocalDateTime.ofInstant(
+                    java.time.Instant.ofEpochSecond(timestamp),
+                    java.time.ZoneId.of("Asia/Ho_Chi_Minh")
+            );
+        } catch (Exception e) {
+            return null;
         }
+    }
 
-        AdvancedPlatformFee fees = order.getData().getAdvancedPlatformFee();
-        double total = 0.0;
-
-        total += safeDouble(fees.getTax());
-        total += safeDouble(fees.getPaymentFee());
-        total += safeDouble(fees.getServiceFee());
-        total += safeDouble(fees.getSellerTransactionFee());
-
-        return total;
+    private boolean isPeakHour(LocalDateTime dateTime) {
+        int hour = dateTime.getHour();
+        return (hour >= 10 && hour <= 14) || (hour >= 18 && hour <= 22);
     }
 }

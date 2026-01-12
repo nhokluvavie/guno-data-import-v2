@@ -4,6 +4,7 @@ import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ProcessingResult;
 import com.guno.dataimport.dto.internal.ErrorReport;
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
+import com.guno.dataimport.dto.platform.shopee.ShopeeOrderDto;
 import com.guno.dataimport.dto.platform.tiktok.TikTokOrderDto;
 import com.guno.dataimport.entity.*;
 import com.guno.dataimport.mapper.FacebookMapper;
@@ -353,9 +354,10 @@ public class BatchProcessor {
             return result;
         }
 
-        List<FacebookOrderDto> shopeeOrders = shopeeOrderObjects.stream()
-                .filter(obj -> obj instanceof FacebookOrderDto)
-                .map(obj -> (FacebookOrderDto) obj)
+        // ✅ FIXED: Cast to ShopeeOrderDto (was FacebookOrderDto)
+        List<ShopeeOrderDto> shopeeOrders = shopeeOrderObjects.stream()
+                .filter(obj -> obj instanceof ShopeeOrderDto)
+                .map(obj -> (ShopeeOrderDto) obj)
                 .toList();
 
         if (shopeeOrders.isEmpty()) {
@@ -366,6 +368,7 @@ public class BatchProcessor {
         try {
             log.info("🛒 Mapping {} Shopee orders...", shopeeOrders.size());
 
+            // ✅ FIXED: All methods now accept List<ShopeeOrderDto>
             List<Customer> customers = mapShopeeCustomers(shopeeOrders, result);
             List<Order> orders = mapShopeeOrders(shopeeOrders, result);
             List<OrderItem> orderItems = mapShopeeOrderItems(shopeeOrders, result);
@@ -378,22 +381,14 @@ public class BatchProcessor {
 
             log.info("🛒 Upserting Shopee entities via temp tables...");
 
-            // FIXED: Correct insert sequence respecting FK constraints
-
-            // Step 1: Master data (no dependencies)
+            // Same FK sequence as Facebook/TikTok
             customerRepository.bulkUpsert(customers);
             productRepository.bulkUpsert(products);
-
-            // Step 2: Fact table (ORDER must be inserted BEFORE dimension tables that reference it)
             orderRepository.bulkUpsert(orders);
-
-            // Step 3: Dimension tables (have FK to order_id)
             geographyRepository.bulkUpsert(geography);
             paymentRepository.bulkUpsert(payments);
             shippingRepository.bulkUpsert(shipping);
             processingDateRepository.bulkUpsert(dates);
-
-            // Step 4: Detail tables (have FK to both order_id and other tables)
             orderItemRepository.bulkUpsert(orderItems);
             orderStatusRepository.bulkUpsert(orderStatuses);
 
@@ -690,13 +685,13 @@ public class BatchProcessor {
     // SHOPEE MAPPING METHODS
     // ================================
 
-    private List<Customer> mapShopeeCustomers(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<Customer> mapShopeeCustomers(List<ShopeeOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
-                        return shopeeMapper.mapToCustomer(order);
+                        return shopeeMapper.mapToCustomer(order);  // ✅ CORRECT
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SP_CUSTOMER", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SHOPEE_CUSTOMER", order.getOrderIdSafe(), "SHOPEE", e));
                         return null;
                     }
                 })
@@ -710,13 +705,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<Order> mapShopeeOrders(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<Order> mapShopeeOrders(List<ShopeeOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return shopeeMapper.mapToOrder(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SP_ORDER", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SHOPEE_ORDER", order.getOrderIdSafe(), "SHOPEE", e));
                         result.setFailedCount(result.getFailedCount() + 1);
                         return null;
                     }
@@ -725,25 +720,25 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<OrderItem> mapShopeeOrderItems(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<OrderItem> mapShopeeOrderItems(List<ShopeeOrderDto> orders, ProcessingResult result) {
         List<OrderItem> allItems = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
+        for (ShopeeOrderDto order : orders) {
             try {
                 allItems.addAll(shopeeMapper.mapToOrderItems(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("SP_ORDER_ITEMS", order.getOrderId(), "SHOPEE", e));
+                result.getErrors().add(ErrorReport.of("SHOPEE_ORDER_ITEMS", order.getOrderIdSafe(), "SHOPEE", e));
             }
         }
         return allItems;
     }
 
-    private List<Product> mapShopeeProducts(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<Product> mapShopeeProducts(List<ShopeeOrderDto> orders, ProcessingResult result) {
         List<Product> allProducts = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
+        for (ShopeeOrderDto order : orders) {
             try {
                 allProducts.addAll(shopeeMapper.mapToProducts(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("SP_PRODUCTS", order.getOrderId(), "SHOPEE", e));
+                result.getErrors().add(ErrorReport.of("SHOPEE_PRODUCTS", order.getOrderIdSafe(), "SHOPEE", e));
             }
         }
         return allProducts.stream()
@@ -756,13 +751,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<GeographyInfo> mapShopeeGeography(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<GeographyInfo> mapShopeeGeography(List<ShopeeOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return shopeeMapper.mapToGeographyInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SP_GEOGRAPHY", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SHOPEE_GEOGRAPHY", order.getOrderIdSafe(), "SHOPEE", e));
                         return null;
                     }
                 })
@@ -770,13 +765,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<PaymentInfo> mapShopeePayments(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<PaymentInfo> mapShopeePayments(List<ShopeeOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return shopeeMapper.mapToPaymentInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SP_PAYMENT", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SHOPEE_PAYMENT", order.getOrderIdSafe(), "SHOPEE", e));
                         return null;
                     }
                 })
@@ -784,13 +779,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<ShippingInfo> mapShopeeShipping(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<ShippingInfo> mapShopeeShipping(List<ShopeeOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return shopeeMapper.mapToShippingInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SP_SHIPPING", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SHOPEE_SHIPPING", order.getOrderIdSafe(), "SHOPEE", e));
                         return null;
                     }
                 })
@@ -798,13 +793,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<ProcessingDateInfo> mapShopeeDates(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<ProcessingDateInfo> mapShopeeDates(List<ShopeeOrderDto> orders, ProcessingResult result) {
         return orders.stream()
                 .map(order -> {
                     try {
                         return shopeeMapper.mapToProcessingDateInfo(order);
                     } catch (Exception e) {
-                        result.getErrors().add(ErrorReport.of("SP_DATE", order.getOrderId(), "SHOPEE", e));
+                        result.getErrors().add(ErrorReport.of("SHOPEE_DATE", order.getOrderIdSafe(), "SHOPEE", e));
                         return null;
                     }
                 })
@@ -812,13 +807,13 @@ public class BatchProcessor {
                 .toList();
     }
 
-    private List<OrderStatus> mapShopeeOrderStatuses(List<FacebookOrderDto> orders, ProcessingResult result) {
+    private List<OrderStatus> mapShopeeOrderStatuses(List<ShopeeOrderDto> orders, ProcessingResult result) {
         List<OrderStatus> allOrderStatuses = new ArrayList<>();
-        for (FacebookOrderDto order : orders) {
+        for (ShopeeOrderDto order : orders) {
             try {
                 allOrderStatuses.addAll(shopeeMapper.mapToOrderStatus(order));
             } catch (Exception e) {
-                result.getErrors().add(ErrorReport.of("SP_ORDER_STATUS", order.getOrderId(), "SHOPEE", e));
+                result.getErrors().add(ErrorReport.of("SHOPEE_ORDER_STATUS", order.getOrderIdSafe(), "SHOPEE", e));
             }
         }
         return allOrderStatuses;

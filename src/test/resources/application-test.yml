@@ -36,9 +36,9 @@ test:
 # ================================
 platform:
   facebook:
-    enabled: false
-  tiktok:
     enabled: true
+  tiktok:
+    enabled: false
   shopee:
     enabled: false
 

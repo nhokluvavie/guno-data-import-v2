@@ -1,53 +1,53 @@
 package com.guno.dataimport.util;
 
 import com.guno.dataimport.dto.platform.facebook.FacebookOrderDto;
+import com.guno.dataimport.dto.platform.shopee.ShopeeOrderDto;
 import com.guno.dataimport.dto.platform.facebook.ChangedLog;
-import com.guno.dataimport.dto.platform.facebook.FacebookItemDto;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * OrderStatusValidator - Updated với logic TikTok tiktok_data
- * Version 7.1 - FIXED: isTikTokDelivered bug
+ * OrderStatusValidator - Updated với logic Shopee mới
+ * Version 8.0 - Shopee Logic với ShopeeOrderDto
  *
  * CHANGELOG:
- * - Bug Fix: isTikTokDelivered() không còn check return_status
- * - Đơn hàng có status=3 luôn là DELIVERED, bất kể có return hay không
- * - Return status chỉ dùng để xác định isReturned(), không ảnh hưởng isDelivered()
+ * v8.0 - Shopee: Sử dụng ShopeeOrderDto từ package riêng
+ * v7.1 - TikTok: Bug Fix isTikTokDelivered không check return_status
+ * v7.0 - TikTok: Priority tiktok_data cho return logic
  */
 @Slf4j
 public class OrderStatusValidator {
 
     // ========== PUBLIC API ==========
 
-    public static boolean isDelivered(FacebookOrderDto order, String platform) {
+    public static boolean isDelivered(Object order, String platform) {
         if (order == null) return false;
         return switch (platform.toUpperCase()) {
-            case "FACEBOOK" -> isFacebookDelivered(order);
-            case "TIKTOK" -> isTikTokDelivered(order);
+            case "FACEBOOK" -> isFacebookDelivered((FacebookOrderDto) order);
+            case "TIKTOK" -> isTikTokDelivered((FacebookOrderDto) order);
             case "SHOPEE" -> isShopeeDelivered(order);
             default -> false;
         };
     }
 
-    public static boolean isCancelled(FacebookOrderDto order, String platform) {
+    public static boolean isCancelled(Object order, String platform) {
         if (order == null) return false;
 
         // Nếu đơn hoàn → không phải cancelled
         if (isReturned(order, platform)) return false;
 
         return switch (platform.toUpperCase()) {
-            case "FACEBOOK" -> isFacebookCancelled(order);
-            case "TIKTOK" -> isTikTokCancelled(order);
+            case "FACEBOOK" -> isFacebookCancelled((FacebookOrderDto) order);
+            case "TIKTOK" -> isTikTokCancelled((FacebookOrderDto) order);
             case "SHOPEE" -> isShopeeCancelled(order);
             default -> false;
         };
     }
 
-    public static boolean isReturned(FacebookOrderDto order, String platform) {
+    public static boolean isReturned(Object order, String platform) {
         if (order == null) return false;
         return switch (platform.toUpperCase()) {
-            case "FACEBOOK" -> isFacebookReturned(order);
-            case "TIKTOK" -> isTikTokReturned(order);
+            case "FACEBOOK" -> isFacebookReturned((FacebookOrderDto) order);
+            case "TIKTOK" -> isTikTokReturned((FacebookOrderDto) order);
             case "SHOPEE" -> isShopeeReturned(order);
             default -> false;
         };
@@ -55,37 +55,21 @@ public class OrderStatusValidator {
 
     // ========== TIKTOK LOGIC (FIXED - Priority tiktok_data) ==========
 
-    /**
-     * FIXED: Không còn check return_status trong delivered
-     * Logic: Đơn hàng có status=3 thì ĐÃ DELIVERED, bất kể có return hay không
-     * Một đơn có thể VỪA delivered VỪA đang được hoàn - đây là 2 trạng thái độc lập
-     */
     private static boolean isTikTokDelivered(FacebookOrderDto order) {
-        // PRIORITY 1: Status 3 = Delivered (quan trọng nhất)
         if (order.getStatus() != null && order.getStatus() == 3) return true;
-
-        // PRIORITY 2: Partner status
         if (hasPartnerStatus(order, "delivered")) return true;
-
-        // PRIORITY 3: Tracking histories
         if (hasTrackingContains(order, "delivered") ||
                 hasTrackingContains(order, "package delivered")) return true;
-
         return false;
     }
 
     private static boolean isTikTokCancelled(FacebookOrderDto order) {
-        // Status 6 = Cancelled
         if (order.getStatus() != null && order.getStatus() == 6) return true;
-
-        // Partner status
         if (hasPartnerStatus(order, "cancelled")) return true;
-
         return false;
     }
 
     private static boolean isTikTokReturned(FacebookOrderDto order) {
-        // PRIORITY 1: Check tiktok_data.return_refund (NEW!)
         if (order.hasRefundData()) {
             String returnType = order.getTiktokData().getReturnRefund().getReturnType();
             if (returnType != null &&
@@ -94,26 +78,21 @@ public class OrderStatusValidator {
             }
         }
 
-        // PRIORITY 2: Status 4 (RETURNING) hoặc 5 (RETURNED)
         if (order.getStatus() != null &&
                 (order.getStatus() == 4 || order.getStatus() == 5)) {
             return true;
         }
 
-        // PRIORITY 3: Items có return_quantity > 0
         if (hasReturnQuantityInItems(order)) return true;
-
-        // PRIORITY 4: Partner is_returned = true
         if (hasPartnerIsReturned(order)) return true;
 
-        // PRIORITY 5: Partner status
         if (hasPartnerStatus(order, "returned") ||
                 hasPartnerStatus(order, "returning")) return true;
 
         return false;
     }
 
-    // ========== FACEBOOK LOGIC (Giữ nguyên logic cũ) ==========
+    // ========== FACEBOOK LOGIC ==========
 
     private static boolean isFacebookDelivered(FacebookOrderDto order) {
         if (order.getStatus() != null && order.getStatus() == 3) return true;
@@ -129,116 +108,74 @@ public class OrderStatusValidator {
     }
 
     private static boolean isFacebookReturned(FacebookOrderDto order) {
-        // Status 4 (RETURNING) hoặc 5 (RETURNED)
         if (order.getStatus() != null &&
                 (order.getStatus() == 4 || order.getStatus() == 5)) {
             return true;
         }
 
-        // Items có return_quantity > 0
         if (hasReturnQuantityInItems(order)) return true;
-
-        // Partner is_returned
         if (hasPartnerIsReturned(order)) return true;
 
-        // Partner status
         if (hasPartnerStatus(order, "returned") ||
                 hasPartnerStatus(order, "returning")) return true;
 
-        // Histories: shipped → cancelled
         if (hasCancelAfterShippedInHistories(order)) return true;
 
         return false;
     }
 
-    // ========== SHOPEE LOGIC (Giữ logic cũ phức tạp) ==========
+    // ========== SHOPEE LOGIC (NEW - Using ShopeeOrderDto) ==========
 
-    private static boolean isShopeeDelivered(FacebookOrderDto order) {
-        boolean everDelivered = hasEverBeenDeliveredShopee(order);
+    /**
+     * Shopee Delivered Logic:
+     * - order_status = "COMPLETED" OR "TO_CONFIRM_RECEIVE"
+     * - Không phụ thuộc vào return status
+     */
+    private static boolean isShopeeDelivered(Object orderObj) {
+        if (!(orderObj instanceof ShopeeOrderDto)) return false;
 
-        // Loại trừ: đang hoàn và chưa từng delivered
-        if (order.getStatus() != null &&
-                (order.getStatus() == 4 || order.getStatus() == 5) && !everDelivered) {
-            return false;
-        }
+        ShopeeOrderDto order = (ShopeeOrderDto) orderObj;
+        if (!order.hasOrderDetail()) return false;
 
-        if (hasReturnQuantityInItems(order) && !everDelivered) return false;
+        String orderStatus = order.getShopeeOrderStatus();
+        if (orderStatus == null) return false;
 
-        // Khẳng định
-        if (everDelivered) return true;
-        if (order.getStatus() != null && order.getStatus() == 3) return true;
-        if (hasPartnerStatus(order, "delivered")) return true;
-        if (hasShopeeStatusInHistories(order, "COMPLETED")) return true;
-
-        return false;
+        return "COMPLETED".equalsIgnoreCase(orderStatus) ||
+                "TO_CONFIRM_RECEIVE".equalsIgnoreCase(orderStatus);
     }
 
-    private static boolean isShopeeCancelled(FacebookOrderDto order) {
-        if (order.getStatus() != null && order.getStatus() == 6) return true;
+    /**
+     * Shopee Cancelled Logic:
+     * - order_status IN ("CANCELLED", "IN_CANCEL", "INVALID")
+     * - Return ưu tiên hơn cancelled (checked in isCancelled())
+     */
+    private static boolean isShopeeCancelled(Object orderObj) {
+        if (!(orderObj instanceof ShopeeOrderDto)) return false;
 
-        if (order.getHistories() == null) return false;
+        ShopeeOrderDto order = (ShopeeOrderDto) orderObj;
+        if (!order.hasOrderDetail()) return false;
 
-        for (ChangedLog log : order.getHistories()) {
-            if (log.getShopeeStatus() != null &&
-                    "CANCELLED".equalsIgnoreCase(log.getShopeeStatus().getNewValue())) {
-                String oldStatus = log.getShopeeStatus().getOldValue();
-                // Chỉ cancelled nếu chưa shipped
-                if (oldStatus == null ||
-                        !(oldStatus.contains("SHIPPED") || oldStatus.contains("IN_TRANSIT"))) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        String orderStatus = order.getShopeeOrderStatus();
+        if (orderStatus == null) return false;
+
+        return "CANCELLED".equalsIgnoreCase(orderStatus) ||
+                "IN_CANCEL".equalsIgnoreCase(orderStatus) ||
+                "INVALID".equalsIgnoreCase(orderStatus);
     }
 
-    private static boolean isShopeeReturned(FacebookOrderDto order) {
-        // Status 4 hoặc 5
-        if (order.getStatus() != null &&
-                (order.getStatus() == 4 || order.getStatus() == 5)) {
-            return true;
-        }
+    /**
+     * Shopee Returned Logic:
+     * - Có shopee_data.order_return object
+     * - order_return.status != null
+     */
+    private static boolean isShopeeReturned(Object orderObj) {
+        if (!(orderObj instanceof ShopeeOrderDto)) return false;
 
-        // Partner is_returned
-        if (hasPartnerIsReturned(order)) return true;
-
-        // Items có return_quantity
-        if (hasReturnQuantityInItems(order)) return true;
-
-        // Histories: shipped → cancelled WITH return_fee hoặc negative COD
-        if (order.getHistories() != null) {
-            boolean hasShippedToCancelled = false;
-            boolean hasReturnFee = false;
-            boolean hasNegativeCod = false;
-
-            for (ChangedLog log : order.getHistories()) {
-                if (log.getShopeeStatus() != null &&
-                        "CANCELLED".equalsIgnoreCase(log.getShopeeStatus().getNewValue()) &&
-                        "SHIPPED".equalsIgnoreCase(log.getShopeeStatus().getOldValue())) {
-                    hasShippedToCancelled = true;
-                }
-                if (log.getReturnFee() != null &&
-                        Boolean.TRUE.equals(log.getReturnFee().getNewValue())) {
-                    hasReturnFee = true;
-                }
-                if (log.getCod() != null && log.getCod().getNewValue() != null &&
-                        log.getCod().getNewValue() < 0) {
-                    hasNegativeCod = true;
-                }
-            }
-
-            if (hasShippedToCancelled && (hasReturnFee || hasNegativeCod)) {
-                return true;
-            }
-        }
-
-        // Partner status
-        if (hasPartnerStatus(order, "returned")) return true;
-
-        return false;
+        ShopeeOrderDto order = (ShopeeOrderDto) orderObj;
+        return order.hasOrderReturn();
     }
 
-    // ========== HELPER METHODS ==========
+    // ========== HELPER METHODS (SHARED) ==========
 
     private static boolean hasPartnerStatus(FacebookOrderDto order, String status) {
         if (order.getTrackingHistories() == null) return false;
@@ -289,30 +226,5 @@ public class OrderStatusValidator {
             }
         }
         return false;
-    }
-
-    private static boolean hasEverBeenDeliveredShopee(FacebookOrderDto order) {
-        if (order.getHistories() == null) return false;
-
-        return order.getHistories().stream()
-                .anyMatch(log -> {
-                    if (log.getShopeeStatus() != null) {
-                        String newStatus = log.getShopeeStatus().getNewValue();
-                        return "COMPLETED".equalsIgnoreCase(newStatus) ||
-                                "DELIVERED".equalsIgnoreCase(newStatus);
-                    }
-                    if (log.getStatus() != null && log.getStatus().getNewValue() != null) {
-                        String status = log.getStatus().getNewValue().toString();
-                        return status.equals("3") || status.contains("delivered");
-                    }
-                    return false;
-                });
-    }
-
-    private static boolean hasShopeeStatusInHistories(FacebookOrderDto order, String status) {
-        if (order.getHistories() == null) return false;
-        return order.getHistories().stream()
-                .anyMatch(log -> log.getShopeeStatus() != null &&
-                        status.equalsIgnoreCase(log.getShopeeStatus().getNewValue()));
     }
 }

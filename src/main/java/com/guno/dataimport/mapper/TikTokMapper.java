@@ -208,6 +208,7 @@ public class TikTokMapper {
                 .isExchanged(refund != null && "REPLACEMENT".equals(refund.getReturnType()))
                 .cancelReason("CANCEL".equals(detail.getStatus()) ? "USER_CANCELLED" : null)
                 .cancelTime(extractCancelTime(order))
+                .orderDt(order.getInsertedAt().toLocalDate().toString())
                 .build();
     }
 

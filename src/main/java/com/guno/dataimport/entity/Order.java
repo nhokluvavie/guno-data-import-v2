@@ -114,4 +114,5 @@ public class Order {
      */
     @Builder.Default private String cancelReason = "";
     @Builder.Default private String cancelTime = "";
+    @Builder.Default private String orderDt = "";
 }

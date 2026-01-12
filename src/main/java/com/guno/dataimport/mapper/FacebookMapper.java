@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -144,7 +145,7 @@ public class FacebookMapper {
                 .organicRevenue(!hasAd(order) ? safeDouble(order.getTotalPriceAfterSubDiscount()) : 0.0)
                 .aov(safeDouble(order.getTotalPriceAfterSubDiscount()))
                 .shippingCostRatio(calculateShippingRatio(order))
-                .createdAt(order.getCreatedAt())
+                .createdAt(order.getInsertedAt())
                 .orderSource(extractSrouce(order))
                 .platformSpecificData(0)
                 .sellerId(extractSellerId(order))
@@ -160,6 +161,7 @@ public class FacebookMapper {
                 .isExchanged(order.isExchangeOrder())
                 .cancelReason("")
                 .cancelTime(extractCancelTime(order))
+                .orderDt(order.getInsertedAt().toLocalDate().toString())
                 .build();
     }
 

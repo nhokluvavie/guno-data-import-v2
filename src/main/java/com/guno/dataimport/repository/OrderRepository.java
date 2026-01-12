@@ -50,8 +50,8 @@ public class OrderRepository {
         days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
         aov, shipping_cost_ratio, created_at, source, platform_specific_data,
         seller_id, seller_name, seller_email, latest_status, is_refunded, refund_amount,
-        refund_date, is_exchanged, cancel_reason, cancel_time
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        refund_date, is_exchanged, cancel_reason, cancel_time, order_dt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (order_id) DO UPDATE SET
         shop_id = EXCLUDED.shop_id,
         internal_uuid = EXCLUDED.internal_uuid,
@@ -76,7 +76,8 @@ public class OrderRepository {
         refund_date = EXCLUDED.refund_date,
         is_exchanged = EXCLUDED.is_exchanged,
         cancel_reason = EXCLUDED.cancel_reason,
-        cancel_time = EXCLUDED.cancel_time
+        cancel_time = EXCLUDED.cancel_time,
+        order_dt = EXCLUDED.order_dt
     """;
 
     // UPDATED: Added 6 new fields
@@ -93,7 +94,7 @@ public class OrderRepository {
         days_since_last_order, promotion_impact, ad_revenue, organic_revenue,
         aov, shipping_cost_ratio, created_at, source, platform_specific_data,
         seller_id, seller_name, seller_email, latest_status, is_refunded, refund_amount,
-        refund_date, is_exchanged, cancel_reason, cancel_time
+        refund_date, is_exchanged, cancel_reason, cancel_time, order_dt
     ) FROM STDIN WITH (FORMAT CSV, DELIMITER ',')
     """;
 
@@ -127,7 +128,8 @@ public class OrderRepository {
                             "        refund_date = EXCLUDED.refund_date,\n" +
                             "        is_exchanged = EXCLUDED.is_exchanged,\n" +
                             "        cancel_reason = EXCLUDED.cancel_reason,\n" +
-                            "        cancel_time = EXCLUDED.cancel_time");
+                            "        cancel_time = EXCLUDED.cancel_time,\n" +
+                            "        order_dt = EXCLUDED.order_dt");
         } catch (Exception e) {
             log.warn("Temp table failed, using batch: {}", e.getMessage());
             return executeBatchUpsert(orders);
@@ -258,7 +260,7 @@ public class OrderRepository {
                         order.getRefundDate(),
                         CsvFormatter.formatBoolean(order.getIsExchanged()),
                         order.getCancelReason(),
-                        order.getCancelTime()
+                        order.getCancelTime(), order.getOrderDt()
                 ))
                 .collect(Collectors.joining("\n"));
     }
@@ -314,7 +316,7 @@ public class OrderRepository {
                 o.getSellerId(), o.getSellerName(), o.getSellerEmail(),
                 // NEW FIELDS:
                 o.getLatestStatus(), o.getIsRefunded(), o.getRefundAmount(),
-                o.getRefundDate(), o.getIsExchanged(), o.getCancelReason(), o.getCancelTime()
+                o.getRefundDate(), o.getIsExchanged(), o.getCancelReason(), o.getCancelTime(), o.getOrderDt()
         };
     }
 
@@ -381,6 +383,7 @@ public class OrderRepository {
                 .isExchanged(rs.getObject("is_exchanged") != null ? rs.getBoolean("is_exchanged") : null)
                 .cancelReason(rs.getString("cancel_reason"))
                 .cancelTime(rs.getString("cancel_time"))
+                .orderDt(rs.getString("order_dt"))
                 .build();
     }
 }

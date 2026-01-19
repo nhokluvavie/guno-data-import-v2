@@ -7,6 +7,8 @@ import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ProcessingResult;
 import com.guno.dataimport.dto.platform.facebook.FacebookApiResponse;
+import com.guno.dataimport.dto.platform.shopee.ShopeeApiResponse;
+import com.guno.dataimport.dto.platform.shopee.ShopeeOrderDto;
 import com.guno.dataimport.dto.platform.tiktok.TikTokApiResponse;
 import com.guno.dataimport.processor.BatchProcessor;
 import lombok.extern.slf4j.Slf4j;
@@ -201,7 +203,8 @@ class AllPlatformsIntegrationTest {
             while (hasMoreData) {
                 log.info("   📡 Shopee API - Page: {}", currentPage);
 
-                FacebookApiResponse response = shopeeApiClient.fetchOrders(shopeeDate, currentPage, shopeePageSize);
+                // ✅ CLEAN: Use ShopeeApiResponse
+                ShopeeApiResponse response = shopeeApiClient.fetchOrders(shopeeDate, currentPage, shopeePageSize);
                 data.apiCalls++;
 
                 if (response == null || response.getCode() != 200) {
@@ -215,12 +218,25 @@ class AllPlatformsIntegrationTest {
                     break;
                 }
 
-                int pageOrders = response.getData().getOrders().size();
-                data.orders.addAll(response.getData().getOrders().stream()
-                        .map(order -> (Object) order)
-                        .toList());
+                int pageOrders = response.getOrderCount();
 
-                log.info("   📦 Shopee Page {} collected: {} orders", currentPage, pageOrders);
+                // ✅ CLEAN: Direct access to ShopeeOrderDto
+                List<Object> shopeeOrders = response.getOrders().stream()
+                        .filter(ShopeeOrderDto::hasShopeeData)
+                        .map(order -> (Object) order)
+                        .toList();
+
+                int validCount = shopeeOrders.size();
+                int filteredCount = pageOrders - validCount;
+
+                if (filteredCount > 0) {
+                    log.warn("   ⚠️ Filtered {} orders with null shopee_data", filteredCount);
+                }
+
+                data.orders.addAll(shopeeOrders);
+
+                log.info("   📦 Shopee Page {} collected: {} orders (Valid: {}, Filtered: {})",
+                        currentPage, pageOrders, validCount, filteredCount);
 
                 if (pageOrders < shopeePageSize) {
                     log.info("   🏁 Last page detected");

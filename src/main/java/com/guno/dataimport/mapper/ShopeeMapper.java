@@ -35,9 +35,55 @@ public class ShopeeMapper {
     private static final Long STATUS_CONFIRMED = 1L;
     private static final Long STATUS_SHIPPED = 2L;
     private static final Long STATUS_DELIVERED = 3L;
-    private static final Long STATUS_RETURNED = 4L;
+    private static final Long STATUS_RETURNED = 5L;
+    private static final Long STATUS_RETURNING = 4L;
+    private static final Long STATUS_REFUNDED = 18L;  // ✅ NEW: For refund cases
+    private static final Long STATUS_RETURN_AND_REFUNDED = 19L;  // ✅ NEW: For refund cases
     private static final Long STATUS_CANCELED = 6L;
     private static final Long STATUS_PACKAGING = 8L;
+    private static final Long STATUS_COMPLETED = 22L;
+
+    /**
+     * Shopee API returns `return_solution` as INTEGER
+     * NOT as string like "REFUND" or "RETURN_REFUND"
+     *
+     * Based on ecommerce common patterns:
+     */
+    public static final int RETURN_SOLUTION_REFUND_ONLY = 1;     // Hoàn tiền (không trả hàng)
+    public static final int RETURN_SOLUTION_RETURN_REFUND = 0;   // Trả hàng + hoàn tiền
+
+// ================================
+// RETURN_REFUND_TYPE VALUES (String)
+// ================================
+
+    /**
+     * From actual data: "return_refund_type": "RRBOC"
+     *
+     * Common Shopee return_refund_types:
+     */
+    public static final String RETURN_TYPE_RRBOC = "RRBOC";     // Return & Refund Before Order Completed
+    public static final String RETURN_TYPE_RRAOC = "RRAOC";     // Return & Refund After Order Completed
+    public static final String RETURN_TYPE_RO = "RO";           // Refund Only
+    public static final String RETURN_TYPE_CMR = "CMR";         // Change of Mind Return
+    public static final String RETURN_TYPE_APPEAL = "APPEAL";   // Appeal case
+
+// ================================
+// RETURN_STATUS VALUES
+// ================================
+
+    /**
+     * From actual data: "status": "PROCESSING"
+     *
+     * Common Shopee return statuses:
+     */
+    public static final String RETURN_STATUS_PROCESSING = "PROCESSING";       // Đang xử lý
+    public static final String RETURN_STATUS_COMPLETED = "COMPLETED";         // Hoàn tất
+    public static final String RETURN_STATUS_CANCELLED = "CANCELLED";         // Đã hủy
+    public static final String RETURN_STATUS_DISPUTE = "DISPUTE";             // Tranh chấp
+    public static final String RETURN_STATUS_PENDING = "PENDING";             // Chờ xử lý
+    public static final String RETURN_STATUS_APPROVED = "APPROVED";           // Đã chấp nhận
+    public static final String RETURN_STATUS_REJECTED = "REJECTED";           // Đã từ chối
+    public static final String RETURN_STATUS_AWAITING_RETURN = "AWAITING_RETURN"; // Chờ trả hàng
 
     // ================================
     // 1. CUSTOMER MAPPING
@@ -184,7 +230,7 @@ public class ShopeeMapper {
             items.add(OrderItem.builder()
                     .orderId(order.getOrderIdSafe())
                     .sku(item.getSkuOrDefault())
-                    .platformProductId("SHOPEE_" + item.getItemId())
+                    .platformProductId("SHOPEE_" + item.getItemId() + "_" + item.getModelId())
                     .quantity(qty)
                     .unitPrice(price)
                     .totalPrice(price * qty)
@@ -217,7 +263,7 @@ public class ShopeeMapper {
 
             products.add(Product.builder()
                     .sku(sku)
-                    .platformProductId("SHOPEE_" + item.getItemId())
+                    .platformProductId("SHOPEE_" + item.getItemId() + "_" + item.getModelId())
                     .productId(item.getItemId().toString())
                     .variationId(item.getModelId() != null ? item.getModelId().toString() : "")
                     .barcode("")
@@ -433,27 +479,57 @@ public class ShopeeMapper {
     // HELPER METHODS - STATUS MAPPING
     // ================================
 
+// ================================
+// USAGE IN ShopeeMapper
+// ================================
+
     private Long mapShopeeToLatestStatus(ShopeeOrderDto order) {
         if (order == null || !order.hasOrderDetail()) return STATUS_NEW;
 
-        // Priority 1: Return
-        if (order.hasOrderReturn()) {
-            return STATUS_RETURNED;
+        // Priority 1: Check Cancelled
+        String orderStatus = order.getShopeeOrderStatus();
+        String pickupTime = order.getOrderDetail().getPickupDoneTime() != null ?  order.getOrderDetail().getPickupDoneTime().toString() : "0";
+        if (orderStatus != null &&
+                orderStatus.equalsIgnoreCase("CANCELLED")) {
+            if (!pickupTime.equals("0")) return STATUS_RETURNED; // 5
+            else return STATUS_CANCELED; // 6
         }
 
-        // Priority 2: Order Status
-        String orderStatus = order.getShopeeOrderStatus();
+        // Priority 2: Check Return/Refund
+        if (order.hasOrderReturn()) {
+            ShopeeOrderReturn returnInfo = order.getOrderReturn();
+
+            // Get return_solution as Integer
+            Integer returnSolution = returnInfo.getReturnSolution();
+            String returnStatus = returnInfo.getStatus();
+
+            // Priority 1: Check if refund is completed (COMPLETED status)
+            if ("ACCEPTED".equals(returnStatus)) {
+                // If solution is refund-related, mark as REFUNDED
+                if (returnSolution != null &&
+                        returnSolution == RETURN_SOLUTION_REFUND_ONLY) {
+                    return STATUS_REFUNDED; // 18
+                }
+                //
+                if (returnSolution != null &&
+                        returnSolution == RETURN_SOLUTION_RETURN_REFUND) {
+                    return STATUS_RETURN_AND_REFUNDED; // 19
+                }
+            }
+        }
+
+        // Priority 3: Regular order status mapping
         if (orderStatus == null) return STATUS_NEW;
 
         return switch (orderStatus.toUpperCase()) {
-            case "UNPAID" -> STATUS_NEW;
-            case "PROCESSED" -> STATUS_CONFIRMED;
-            case "READY_TO_SHIP" -> STATUS_PACKAGING;
-            case "SHIPPED" -> STATUS_SHIPPED;
-            case "TO_CONFIRM_RECEIVE", "COMPLETED" -> STATUS_DELIVERED;
-            case "CANCELLED", "IN_CANCEL", "INVALID" -> STATUS_CANCELED;
-            case "TO_RETURN" -> STATUS_RETURNED;
-            default -> STATUS_NEW;
+            case "UNPAID" -> STATUS_NEW;                    // 0
+            case "PROCESSED" -> STATUS_CONFIRMED;           // 1
+            case "READY_TO_SHIP" -> STATUS_PACKAGING;       // 8
+            case "SHIPPED" -> STATUS_SHIPPED;               // 2
+            case "TO_CONFIRM_RECEIVE" -> STATUS_DELIVERED;  // 3
+            case "COMPLETED" -> STATUS_COMPLETED;           // 22
+            case "TO_RETURN" -> STATUS_RETURNING;            // 4
+            default -> STATUS_NEW;                          // 0
         };
     }
 

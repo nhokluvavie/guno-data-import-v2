@@ -29,7 +29,7 @@ spring:
 # ✅ NEW: Unified Test Data Configuration
 test:
   data:
-    date: "2025-10-30"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
+    date: "2026-01-07"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
 
 # ================================
 # PLATFORM CONFIGURATION - NEW!
@@ -76,7 +76,7 @@ api:
       Authorization: x-webhook-api-key
       X-API-Key: iuKqTys2XUNJOFLhByaH3woWsrLDC5yajHu7dvSe63U34qN57Zi9bNxeMj2FQc9qcn8sgQr
     timeout-seconds: 300
-    page-size: 5000
+    page-size: 2000
     max-retries: 3
     retry-delay-ms: 1000
     default-date: ${test.data.date}  # ✅ Use unified date

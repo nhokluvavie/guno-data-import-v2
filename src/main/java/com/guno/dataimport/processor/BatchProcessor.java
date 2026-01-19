@@ -354,7 +354,7 @@ public class BatchProcessor {
             return result;
         }
 
-        // ✅ FIXED: Cast to ShopeeOrderDto (was FacebookOrderDto)
+        // Step 1: Cast to ShopeeOrderDto
         List<ShopeeOrderDto> shopeeOrders = shopeeOrderObjects.stream()
                 .filter(obj -> obj instanceof ShopeeOrderDto)
                 .map(obj -> (ShopeeOrderDto) obj)
@@ -365,10 +365,50 @@ public class BatchProcessor {
             return result;
         }
 
+        // ✅ Step 2: FILTER null shopee_data with ORDER ID LOGGING
+        int originalSize = shopeeOrders.size();
+
+        // ✅ LOG FILTERED ORDER IDs
+        List<String> filteredOrderIds = shopeeOrders.stream()
+                .filter(order -> !order.hasShopeeData())
+                .map(order -> order.getOrderIdSafe())
+                .toList();
+
+        shopeeOrders = shopeeOrders.stream()
+                .filter(order -> order.hasShopeeData())
+                .toList();
+
+        int filteredCount = originalSize - shopeeOrders.size();
+
+        if (filteredCount > 0) {
+            log.warn("⚠️ ========================================");
+            log.warn("⚠️ FILTERED ORDERS (null shopee_data): {} orders", filteredCount);
+            log.warn("⚠️ ========================================");
+
+            // ✅ LOG ALL FILTERED ORDER IDs
+            if (filteredOrderIds.size() <= 100) {
+                // Show all if <= 100
+                log.warn("📋 Filtered Order IDs: {}", filteredOrderIds);
+            } else {
+                // Show first 50 and last 50 if > 100
+                log.warn("📋 Filtered Order IDs (first 50): {}",
+                        filteredOrderIds.subList(0, 50));
+                log.warn("📋 ... ({} more orders) ...", filteredOrderIds.size() - 100);
+                log.warn("📋 Filtered Order IDs (last 50): {}",
+                        filteredOrderIds.subList(filteredOrderIds.size() - 50, filteredOrderIds.size()));
+            }
+            log.warn("⚠️ ========================================");
+        }
+
+        if (shopeeOrders.isEmpty()) {
+            log.warn("No valid Shopee orders after filtering null shopee_data");
+            return result;
+        }
+
         try {
             log.info("🛒 Mapping {} Shopee orders...", shopeeOrders.size());
 
-            // ✅ FIXED: All methods now accept List<ShopeeOrderDto>
+            // Step 3: Map all entities with error handling
             List<Customer> customers = mapShopeeCustomers(shopeeOrders, result);
             List<Order> orders = mapShopeeOrders(shopeeOrders, result);
             List<OrderItem> orderItems = mapShopeeOrderItems(shopeeOrders, result);
@@ -379,25 +419,147 @@ public class BatchProcessor {
             List<ProcessingDateInfo> dates = mapShopeeDates(shopeeOrders, result);
             List<OrderStatus> orderStatuses = mapShopeeOrderStatuses(shopeeOrders, result);
 
+            // ✅ Step 4: FK INTEGRITY CHECK with ORDER ID LOGGING
+            Set<String> validOrderIds = orders.stream()
+                    .map(Order::getOrderId)
+                    .collect(Collectors.toSet());
+
+            // ✅ LOG FAILED MAPPING ORDER IDs
+            Set<String> attemptedOrderIds = shopeeOrders.stream()
+                    .map(ShopeeOrderDto::getOrderIdSafe)
+                    .collect(Collectors.toSet());
+
+            List<String> failedMappingOrderIds = attemptedOrderIds.stream()
+                    .filter(id -> !validOrderIds.contains(id))
+                    .sorted()
+                    .toList();
+
+            if (!failedMappingOrderIds.isEmpty()) {
+                log.warn("⚠️ ========================================");
+                log.warn("⚠️ FAILED MAPPING ORDERS: {} orders", failedMappingOrderIds.size());
+                log.warn("⚠️ ========================================");
+
+                // ✅ LOG ALL FAILED MAPPING ORDER IDs
+                if (failedMappingOrderIds.size() <= 100) {
+                    log.warn("📋 Failed Mapping Order IDs: {}", failedMappingOrderIds);
+                } else {
+                    log.warn("📋 Failed Mapping Order IDs (first 50): {}",
+                            failedMappingOrderIds.subList(0, 50));
+                    log.warn("📋 ... ({} more orders) ...", failedMappingOrderIds.size() - 100);
+                    log.warn("📋 Failed Mapping Order IDs (last 50): {}",
+                            failedMappingOrderIds.subList(failedMappingOrderIds.size() - 50,
+                                    failedMappingOrderIds.size()));
+                }
+                log.warn("⚠️ ========================================");
+            }
+
+            if (validOrderIds.size() != shopeeOrders.size()) {
+                log.warn("⚠️ Only {} of {} orders mapped successfully",
+                        validOrderIds.size(), shopeeOrders.size());
+            }
+
+            // ✅ Step 5: Filter dependent entities
+            geography = geography.stream()
+                    .filter(geo -> validOrderIds.contains(geo.getOrderId()))
+                    .toList();
+
+            payments = payments.stream()
+                    .filter(p -> validOrderIds.contains(p.getOrderId()))
+                    .toList();
+
+            shipping = shipping.stream()
+                    .filter(s -> validOrderIds.contains(s.getOrderId()))
+                    .toList();
+
+            dates = dates.stream()
+                    .filter(d -> validOrderIds.contains(d.getOrderId()))
+                    .toList();
+
+            orderItems = orderItems.stream()
+                    .filter(item -> validOrderIds.contains(item.getOrderId()))
+                    .toList();
+
+            orderStatuses = orderStatuses.stream()
+                    .filter(status -> validOrderIds.contains(status.getOrderId()))
+                    .toList();
+
+            log.info("📊 FK Filtered Results:");
+            log.info("   Orders: {}", orders.size());
+            log.info("   Geography: {}", geography.size());
+            log.info("   Payments: {}", payments.size());
+            log.info("   Shipping: {}", shipping.size());
+            log.info("   Dates: {}", dates.size());
+            log.info("   Items: {}", orderItems.size());
+            log.info("   Statuses: {}", orderStatuses.size());
+
+            // ✅ Step 6: Insert with FK sequence
             log.info("🛒 Upserting Shopee entities via temp tables...");
 
-            // Same FK sequence as Facebook/TikTok
-            customerRepository.bulkUpsert(customers);
-            productRepository.bulkUpsert(products);
-            orderRepository.bulkUpsert(orders);
-            geographyRepository.bulkUpsert(geography);
-            paymentRepository.bulkUpsert(payments);
-            shippingRepository.bulkUpsert(shipping);
-            processingDateRepository.bulkUpsert(dates);
-            orderItemRepository.bulkUpsert(orderItems);
-            orderStatusRepository.bulkUpsert(orderStatuses);
+            try {
+                customerRepository.bulkUpsert(customers);
+                productRepository.bulkUpsert(products);
+                orderRepository.bulkUpsert(orders);
+                geographyRepository.bulkUpsert(geography);
+                paymentRepository.bulkUpsert(payments);
+                shippingRepository.bulkUpsert(shipping);
+                processingDateRepository.bulkUpsert(dates);
+                orderItemRepository.bulkUpsert(orderItems);
+                orderStatusRepository.bulkUpsert(orderStatuses);
 
-            result.setSuccessCount(shopeeOrders.size() - result.getFailedCount());
-            log.info("✅ Shopee processing completed - {} successful", result.getSuccessCount());
+                log.info("✅ All Shopee entities inserted successfully");
+
+            } catch (Exception dbError) {
+                log.error("❌ ========================================");
+                log.error("❌ DATABASE INSERT FAILED");
+                log.error("❌ ========================================");
+                log.error("❌ Error: {}", dbError.getMessage());
+
+                // ✅ LOG DB FAILED ORDER IDs (all valid orders that failed)
+                List<String> dbFailedOrderIds = new ArrayList<>(validOrderIds);
+                if (!dbFailedOrderIds.isEmpty()) {
+                    if (dbFailedOrderIds.size() <= 100) {
+                        log.error("📋 DB Insert Failed Order IDs: {}", dbFailedOrderIds);
+                    } else {
+                        log.error("📋 DB Insert Failed Order IDs (first 50): {}",
+                                dbFailedOrderIds.subList(0, 50));
+                        log.error("📋 ... ({} more orders) ...", dbFailedOrderIds.size() - 100);
+                        log.error("📋 DB Insert Failed Order IDs (last 50): {}",
+                                dbFailedOrderIds.subList(dbFailedOrderIds.size() - 50,
+                                        dbFailedOrderIds.size()));
+                    }
+                }
+                log.error("❌ ========================================");
+                throw dbError;
+            }
+
+            // ✅ Step 7: Result tracking
+            int totalFiltered = filteredCount;
+            int totalFailedMapping = failedMappingOrderIds.size();
+            int totalSuccess = orders.size();
+            int totalFailed = totalFiltered + totalFailedMapping;
+
+            result.setTotalProcessed(originalSize);
+            result.setSuccessCount(totalSuccess);
+            result.setFailedCount(totalFailed);
+
+            // ✅ SUMMARY LOG
+            log.info("════════════════════════════════════════");
+            log.info("📊 SHOPEE PROCESSING SUMMARY");
+            log.info("════════════════════════════════════════");
+            log.info("   Total Received: {}", originalSize);
+            log.info("   ├─ Filtered (null data): {}", totalFiltered);
+            log.info("   ├─ Failed Mapping: {}", totalFailedMapping);
+            log.info("   ├─ Successfully Inserted: {}", totalSuccess);
+            log.info("   └─ Total Failed: {}", totalFailed);
+            log.info("════════════════════════════════════════");
+
+            log.info("✅ Shopee completed - Success: {}, Failed: {}",
+                    result.getSuccessCount(), result.getFailedCount());
 
         } catch (Exception e) {
             log.error("❌ Shopee processing error: {}", e.getMessage(), e);
-            result.setFailedCount(shopeeOrders.size());
+            result.setTotalProcessed(originalSize);
+            result.setFailedCount(originalSize);
             result.getErrors().add(ErrorReport.of("SHOPEE_PROCESSING", "BATCH", "SHOPEE", e));
         }
 

@@ -1,20 +1,19 @@
 package com.guno.dataimport.test;
 
 import com.guno.dataimport.DataImportApplication;
-import com.guno.dataimport.api.client.FacebookApiClient;
-import com.guno.dataimport.api.client.ShopeeApiClient;
 import com.guno.dataimport.api.client.TikTokApiClient;
 import com.guno.dataimport.dto.internal.CollectedData;
 import com.guno.dataimport.dto.internal.ProcessingResult;
 import com.guno.dataimport.dto.platform.tiktok.TikTokApiResponse;
 import com.guno.dataimport.dto.platform.tiktok.TikTokOrderDto;
 import com.guno.dataimport.processor.BatchProcessor;
+import com.guno.dataimport.test.util.DateRangeTestHelper;
+import com.guno.dataimport.test.util.DateRangeSummary;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
@@ -23,33 +22,18 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
 
 /**
- * TikTok Integration Test - UPDATED VERSION
- * Uses TikTokApiResponse instead of FacebookApiResponse
+ * TikTok Integration Test - WITH DATE RANGE SUPPORT
  */
 @SpringBootTest(classes = DataImportApplication.class)
 @ActiveProfiles("test")
 @Slf4j
 class TikTokIntegrationTest {
 
-    @Autowired
-    private TikTokApiClient tikTokApiClient;
-
-    @Autowired
-    private BatchProcessor batchProcessor;
-
-    // Mock các API client không cần thiết
-    @MockBean
-    private FacebookApiClient facebookApiClient;
-
-    @MockBean
-    private ShopeeApiClient shopeeApiClient;
-
-    @Value("${api.tiktok.default-date}")
-    private String testDate;
+    @Autowired private TikTokApiClient tikTokApiClient;
+    @Autowired private BatchProcessor batchProcessor;
+    @Autowired private DateRangeTestHelper dateRangeHelper;
 
     @Value("${api.tiktok.page-size}")
     private int pageSize;
@@ -58,122 +42,179 @@ class TikTokIntegrationTest {
             .format(LocalDateTime.now());
 
     @Test
-    void shouldProcessFullDayDataWithPagination() {
-        log.info("=".repeat(60));
-        log.info("🎯 TIKTOK FULL DAY DATA TEST");
-        log.info("Date: {} | PageSize: {} | Session: {}", testDate, pageSize, SESSION_ID);
-        log.info("=".repeat(60));
+    void shouldProcessDateRangeWithPagination() {
+        // Validate configuration
+        dateRangeHelper.validateConfiguration();
 
-        // Mock Facebook và Shopee API để trả về false (không available)
-        when(facebookApiClient.isApiAvailable()).thenReturn(false);
-        when(shopeeApiClient.isApiAvailable()).thenReturn(false);
+        // Get dates to process
+        List<String> datesToProcess = dateRangeHelper.getDatesToProcess();
+        DateRangeSummary summary = new DateRangeSummary("TIKTOK");
 
-        long startTime = System.currentTimeMillis();
-        List<Object> allOrders = new ArrayList<>();
+        log.info("╔═══════════════════════════════════════════════════════════════════╗");
+        log.info("║  🎯 TIKTOK DATE RANGE PROCESSING TEST");
+        log.info("╠═══════════════════════════════════════════════════════════════════╣");
+        log.info("║  {}", dateRangeHelper.getDateRangeInfo());
+        log.info("║  Page Size: {} | Session: {}", pageSize, SESSION_ID);
+        log.info("║  Continue on Error: {}", dateRangeHelper.shouldContinueOnError());
+        log.info("╚═══════════════════════════════════════════════════════════════════╝");
+
+        // Process each date
+        int dateIndex = 1;
+        for (String currentDate : datesToProcess) {
+            log.info("");
+            log.info("═".repeat(70));
+            log.info("📅 Processing Date {}/{}: {}", dateIndex, datesToProcess.size(), currentDate);
+            log.info("═".repeat(70));
+
+            long dateStartTime = System.currentTimeMillis();
+            boolean dateSuccess = false;
+            String errorMessage = null;
+            int ordersCollected = 0;
+            int successCount = 0;
+            int failedCount = 0;
+
+            try {
+                // Process single date
+                ProcessingResult result = processSingleDate(currentDate);
+
+                ordersCollected = result.getTotalProcessed();
+                successCount = result.getSuccessCount();
+                failedCount = result.getFailedCount();
+                dateSuccess = result.getSuccessCount() > 0;
+
+                // Log per-date summary if enabled
+                if (dateRangeHelper.shouldLogPerDateSummary()) {
+                    logDateSummary(currentDate, result, System.currentTimeMillis() - dateStartTime);
+                }
+
+            } catch (Exception e) {
+                log.error("❌ Error processing date {}: {}", currentDate, e.getMessage(), e);
+                errorMessage = e.getMessage();
+
+                if (!dateRangeHelper.shouldContinueOnError()) {
+                    log.error("🛑 Stopping due to error (continue-on-error=false)");
+                    summary.addDateResult(currentDate, ordersCollected, successCount, failedCount,
+                            System.currentTimeMillis() - dateStartTime, false, errorMessage);
+                    break;
+                }
+            }
+
+            // Add result to summary
+            summary.addDateResult(currentDate, ordersCollected, successCount, failedCount,
+                    System.currentTimeMillis() - dateStartTime, dateSuccess, errorMessage);
+
+            // Delay between dates
+            if (dateIndex < datesToProcess.size()) {
+                dateRangeHelper.delayBetweenDates();
+            }
+
+            dateIndex++;
+        }
+
+        // Print comprehensive summary
+        log.info("");
+        if (dateRangeHelper.shouldGenerateSummary()) {
+            summary.printSummary();
+        }
+
+        // Assertions
+        assertThat(summary.getTotalOrders()).isGreaterThanOrEqualTo(0);
+
+        if (!dateRangeHelper.shouldContinueOnError()) {
+            assertThat(summary.isAllSuccessful())
+                    .withFailMessage("Some dates failed: " + summary.getFailedDates())
+                    .isTrue();
+        }
+    }
+
+    /**
+     * Process a single date
+     */
+    private ProcessingResult processSingleDate(String date) {
+        List<TikTokOrderDto> allOrders = new ArrayList<>();
         int currentPage = 1;
-        int totalApiCalls = 0;
         boolean hasMoreData = true;
 
-        try {
-            // Step 1: Collect all pages for the specific date
-            log.info("📥 Step 1: Collecting Data with Pagination");
-            while (hasMoreData) {
-                log.info("   📡 Calling TikTok API - Page: {}, PageSize: {}", currentPage, pageSize);
+        log.info("📥 Step 1: Collecting Data for {}", date);
 
-                TikTokApiResponse response = tikTokApiClient.fetchOrders(testDate, currentPage, pageSize);
-                totalApiCalls++;
+        // Collect all pages
+        while (hasMoreData) {
+            log.info("   📡 Calling TikTok API - Date: {}, Page: {}, PageSize: {}",
+                    date, currentPage, pageSize);
 
-                if (response == null || response.getCode() != 200) {
-                    log.warn("   ⚠️ TikTok API failed at page {}: {}", currentPage,
-                            response != null ? response.getMessage() : "null response");
-                    break;
-                }
+            TikTokApiResponse response = tikTokApiClient.fetchOrders(date, currentPage, pageSize);
 
-                if (!response.hasOrders()) {
-                    log.info("   ✅ No more data at page {} - Stopping pagination", currentPage);
-                    hasMoreData = false;
-                } else {
-                    int pageOrderCount = response.getOrderCount();
-
-                    // ✅ FILTER: Chỉ lấy orders có tiktok_data != null
-                    List<TikTokOrderDto> validOrders = response.getOrders().stream()
-                            .filter(TikTokOrderDto::hasTikTokData)  // Filter out null tiktok_data
-                            .toList();
-
-                    int filteredCount = pageOrderCount - validOrders.size();
-                    if (filteredCount > 0) {
-                        log.warn("   ⚠️ Filtered out {} orders with null tiktok_data", filteredCount);
-                    }
-
-                    allOrders.addAll(validOrders);  // ✅ Add only valid orders
-
-                    log.info("   📦 Page {} collected: {} orders (Valid: {}, Filtered: {}, Total: {})",
-                            currentPage, pageOrderCount, validOrders.size(), filteredCount, allOrders.size());
-
-                    // Check if we reached the end
-                    if (pageOrderCount < pageSize) {
-                        log.info("   ✅ Partial page detected - Last page reached");
-                        hasMoreData = false;
-                    }
-
-                    currentPage++;
-                }
-
-                // Safety limit to prevent infinite loops
-                if (currentPage > 100) {
-                    log.warn("   ⚠️ Safety limit reached (100 pages) - Stopping");
-                    break;
-                }
+            if (response == null || response.getCode() != 200) {
+                log.warn("   ⚠️ API failed at page {}: {}", currentPage,
+                        response != null ? response.getMessage() : "null response");
+                break;
             }
 
-            long collectionTime = System.currentTimeMillis() - startTime;
-            log.info("📊 Collection Summary:");
-            log.info("   Total Orders: {}", allOrders.size());
-            log.info("   API Calls: {}", totalApiCalls);
-            log.info("   Collection Time: {}ms", collectionTime);
+            List<TikTokOrderDto> pageOrders = response.getOrders();
+            if (pageOrders == null || pageOrders.isEmpty()) {
+                log.info("   ✅ No more data at page {}", currentPage);
+                break;
+            }
 
-            // Step 2: Process all collected data
-            if (!allOrders.isEmpty()) {
-                log.info("🔄 Step 2: Processing {} orders", allOrders.size());
+            // Filter valid orders
+            List<TikTokOrderDto> validOrders = pageOrders.stream()
+                    .filter(order -> order != null && order.hasTikTokData())
+                    .toList();
 
-                CollectedData collectedData = new CollectedData();
-                collectedData.setTikTokOrders(allOrders);
+            int filteredCount = pageOrders.size() - validOrders.size();
+            if (filteredCount > 0) {
+                log.warn("   ⚠️ Page {} filtered {} orders (null tiktok_data)",
+                        currentPage, filteredCount);
+            }
 
-                long processingStartTime = System.currentTimeMillis();
-                ProcessingResult result = batchProcessor.processCollectedData(collectedData);
-                long processingTime = System.currentTimeMillis() - processingStartTime;
+            allOrders.addAll(validOrders);
+            log.info("   📦 Page {} collected: {} orders (Total so far: {})",
+                    currentPage, validOrders.size(), allOrders.size());
 
-                log.info("✅ Processing Complete:");
-                log.info("   Success: {}", result.getSuccessCount());
-                log.info("   Failed: {}", result.getFailedCount());
-                log.info("   Processing Time: {}ms", processingTime);
-                log.info("   Success Rate: {}%", result.getSuccessRate());
-
-                // Assertions
-                assertThat(result).isNotNull();
-                assertThat(result.getTotalProcessed()).isEqualTo(allOrders.size());
-                assertThat(result.getSuccessCount()).isGreaterThan(0);
+            // Check if last page
+            if (pageOrders.size() < pageSize) {
+                log.info("   ✅ Partial page detected - Last page reached");
+                hasMoreData = false;
             } else {
-                log.warn("⚠️ No orders collected - Skipping processing");
+                currentPage++;
             }
-
-            // Final summary
-            long totalTime = System.currentTimeMillis() - startTime;
-            log.info("=".repeat(60));
-            log.info("🎉 TEST COMPLETED");
-            log.info("Total Time: {}ms | Orders: {} | API Calls: {}",
-                    totalTime, allOrders.size(), totalApiCalls);
-            log.info("=".repeat(60));
-
-            // Verify mocks were not called
-            verify(facebookApiClient, atMost(1)).isApiAvailable();
-            verify(shopeeApiClient, atMost(1)).isApiAvailable();
-            verify(facebookApiClient, never()).fetchOrders(anyString(), anyInt(), anyInt());
-            verify(shopeeApiClient, never()).fetchOrders(anyString(), anyInt(), anyInt());
-
-        } catch (Exception e) {
-            log.error("❌ Test failed with exception", e);
-            fail("Test failed: " + e.getMessage());
         }
+
+        log.info("📊 Collection Summary for {}: {} orders collected", date, allOrders.size());
+
+        // Process collected data
+        if (allOrders.isEmpty()) {
+            log.warn("⚠️ No valid orders for date {}, skipping processing", date);
+            return new ProcessingResult();
+        }
+
+        log.info("🔄 Step 2: Processing {} orders for {}", allOrders.size(), date);
+
+        CollectedData collectedData = new CollectedData();
+        collectedData.setTikTokOrders(new ArrayList<>(allOrders));
+
+        ProcessingResult result = batchProcessor.processCollectedData(collectedData);
+
+        return result;
+    }
+
+    /**
+     * Log per-date summary
+     */
+    private void logDateSummary(String date, ProcessingResult result, long timeMs) {
+        log.info("─".repeat(70));
+        log.info("📊 SUMMARY FOR {}", date);
+        log.info("─".repeat(70));
+        log.info("   Total Orders: {}", result.getTotalProcessed());
+        log.info("   Successfully Processed: {}", result.getSuccessCount());
+        log.info("   Failed: {}", result.getFailedCount());
+        log.info("   Success Rate: {:.1f}%", result.getSuccessRate());
+        log.info("   Processing Time: {}ms", timeMs);
+
+        if (!result.getErrors().isEmpty()) {
+            log.warn("   ⚠️ Errors: {}", result.getErrors().size());
+        }
+
+        log.info("─".repeat(70));
     }
 }

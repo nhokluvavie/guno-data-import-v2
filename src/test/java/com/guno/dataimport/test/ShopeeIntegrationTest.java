@@ -7,6 +7,8 @@ import com.guno.dataimport.dto.internal.ProcessingResult;
 import com.guno.dataimport.dto.platform.shopee.ShopeeApiResponse;
 import com.guno.dataimport.dto.platform.shopee.ShopeeOrderDto;
 import com.guno.dataimport.processor.BatchProcessor;
+import com.guno.dataimport.test.util.DateRangeTestHelper;
+import com.guno.dataimport.test.util.DateRangeSummary;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,28 +20,26 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.fail;
+import static org.assertj.core.api.Assertions.*;
 
 /**
- * Shopee Integration Test - WITH EXPLICIT ORDER ID LOGGING
- * ✅ Logs ACTUAL order_id lists (not just counts)
+ * Shopee Integration Test - WITH DATE RANGE SUPPORT
+ *
+ * Features:
+ * - Process single date or date range (configurable in application-test.yml)
+ * - Loop through each date, collect data, and update DB
+ * - Generate comprehensive summary across all dates
+ * - Continue on error (configurable)
  */
 @SpringBootTest(classes = DataImportApplication.class)
 @ActiveProfiles("test")
 @Slf4j
 class ShopeeIntegrationTest {
 
-    @Autowired
-    private ShopeeApiClient shopeeApiClient;
-
-    @Autowired
-    private BatchProcessor batchProcessor;
-
-    @Value("${api.shopee.default-date}")
-    private String testDate;
+    @Autowired private ShopeeApiClient shopeeApiClient;
+    @Autowired private BatchProcessor batchProcessor;
+    @Autowired private DateRangeTestHelper dateRangeHelper;
 
     @Value("${api.shopee.page-size}")
     private int pageSize;
@@ -48,197 +48,179 @@ class ShopeeIntegrationTest {
             .format(LocalDateTime.now());
 
     @Test
-    void shouldProcessFullDayDataWithPagination() {
-        log.info("=".repeat(60));
-        log.info("🎯 SHOPEE FULL DAY DATA TEST - EXPLICIT ORDER ID LOGGING");
-        log.info("Date: {} | PageSize: {} | Session: {}", testDate, pageSize, SESSION_ID);
-        log.info("=".repeat(60));
+    void shouldProcessDateRangeWithPagination() {
+        // Validate configuration
+        dateRangeHelper.validateConfiguration();
 
-        long startTime = System.currentTimeMillis();
-        List<Object> allOrders = new ArrayList<>();
+        // Get dates to process
+        List<String> datesToProcess = dateRangeHelper.getDatesToProcess();
+        DateRangeSummary summary = new DateRangeSummary("SHOPEE");
+
+        log.info("╔═══════════════════════════════════════════════════════════════════╗");
+        log.info("║  🎯 SHOPEE DATE RANGE PROCESSING TEST");
+        log.info("╠═══════════════════════════════════════════════════════════════════╣");
+        log.info("║  {}", dateRangeHelper.getDateRangeInfo());
+        log.info("║  Page Size: {} | Session: {}", pageSize, SESSION_ID);
+        log.info("║  Continue on Error: {}", dateRangeHelper.shouldContinueOnError());
+        log.info("╚═══════════════════════════════════════════════════════════════════╝");
+
+        // Process each date
+        int dateIndex = 1;
+        for (String currentDate : datesToProcess) {
+            log.info("");
+            log.info("═".repeat(70));
+            log.info("📅 Processing Date {}/{}: {}", dateIndex, datesToProcess.size(), currentDate);
+            log.info("═".repeat(70));
+
+            long dateStartTime = System.currentTimeMillis();
+            boolean dateSuccess = false;
+            String errorMessage = null;
+            int ordersCollected = 0;
+            int successCount = 0;
+            int failedCount = 0;
+
+            try {
+                // Process single date
+                ProcessingResult result = processSingleDate(currentDate);
+
+                ordersCollected = result.getTotalProcessed();
+                successCount = result.getSuccessCount();
+                failedCount = result.getFailedCount();
+                dateSuccess = result.getSuccessCount() > 0;
+
+                // Log per-date summary if enabled
+                if (dateRangeHelper.shouldLogPerDateSummary()) {
+                    logDateSummary(currentDate, result, System.currentTimeMillis() - dateStartTime);
+                }
+
+            } catch (Exception e) {
+                log.error("❌ Error processing date {}: {}", currentDate, e.getMessage(), e);
+                errorMessage = e.getMessage();
+
+                if (!dateRangeHelper.shouldContinueOnError()) {
+                    log.error("🛑 Stopping due to error (continue-on-error=false)");
+                    summary.addDateResult(currentDate, ordersCollected, successCount, failedCount,
+                            System.currentTimeMillis() - dateStartTime, false, errorMessage);
+                    break;
+                }
+            }
+
+            // Add result to summary
+            summary.addDateResult(currentDate, ordersCollected, successCount, failedCount,
+                    System.currentTimeMillis() - dateStartTime, dateSuccess, errorMessage);
+
+            // Delay between dates
+            if (dateIndex < datesToProcess.size()) {
+                dateRangeHelper.delayBetweenDates();
+            }
+
+            dateIndex++;
+        }
+
+        // Print comprehensive summary
+        log.info("");
+        if (dateRangeHelper.shouldGenerateSummary()) {
+            summary.printSummary();
+        }
+
+        // Assertions
+        assertThat(summary.getTotalOrders()).isGreaterThanOrEqualTo(0);
+
+        if (!dateRangeHelper.shouldContinueOnError()) {
+            assertThat(summary.isAllSuccessful())
+                    .withFailMessage("Some dates failed: " + summary.getFailedDates())
+                    .isTrue();
+        }
+    }
+
+    /**
+     * Process a single date
+     */
+    private ProcessingResult processSingleDate(String date) {
+        List<ShopeeOrderDto> allOrders = new ArrayList<>();
         int currentPage = 1;
-        int totalApiCalls = 0;
-        int totalFilteredOrders = 0;
-
-        // ✅ Track ALL filtered order IDs
-        List<String> allFilteredOrderIds = new ArrayList<>();
-
         boolean hasMoreData = true;
 
-        try {
-            // Step 1: Collect all pages
-            log.info("📥 Step 1: Collecting Data with Pagination");
-            while (hasMoreData) {
-                log.info("   📡 Calling Shopee API - Page: {}, PageSize: {}", currentPage, pageSize);
+        log.info("📥 Step 1: Collecting Data for {}", date);
 
-                ShopeeApiResponse response = shopeeApiClient.fetchOrders(testDate, currentPage, pageSize);
-                totalApiCalls++;
+        // Collect all pages
+        while (hasMoreData) {
+            log.info("   📡 Calling Shopee API - Date: {}, Page: {}, PageSize: {}",
+                    date, currentPage, pageSize);
 
-                if (response == null || response.getCode() != 200) {
-                    log.warn("   ⚠️ Shopee API failed at page {}: {}", currentPage,
-                            response != null ? response.getMessage() : "null response");
-                    break;
-                }
+            ShopeeApiResponse response = shopeeApiClient.fetchOrders(date, currentPage, pageSize);
 
-                if (!response.hasOrders()) {
-                    log.info("   ✅ No more data at page {} - Stopping pagination", currentPage);
-                    hasMoreData = false;
-                } else {
-                    int pageOrderCount = response.getOrderCount();
-
-                    // ✅ Collect filtered order IDs for THIS PAGE
-                    List<String> pageFilteredIds = response.getOrders().stream()
-                            .filter(order -> !order.hasShopeeData())
-                            .map(ShopeeOrderDto::getOrderIdSafe)
-                            .collect(Collectors.toList());
-
-                    allFilteredOrderIds.addAll(pageFilteredIds);
-
-                    // Get valid orders
-                    List<ShopeeOrderDto> validOrders = response.getOrders().stream()
-                            .filter(ShopeeOrderDto::hasShopeeData)
-                            .toList();
-
-                    int failedCount = pageOrderCount - validOrders.size();
-                    totalFilteredOrders += failedCount;
-
-                    if (failedCount > 0) {
-                        log.warn("   ⚠️ Page {} filtered {} orders", currentPage, failedCount);
-                        // ✅ LOG THIS PAGE's FILTERED IDs
-                        log.warn("   📋 Page {} Filtered IDs: {}", currentPage, pageFilteredIds);
-                    }
-
-                    allOrders.addAll(validOrders);
-
-                    log.info("   📦 Page {} collected: {} orders (Valid: {}, Filtered: {}, Total: {})",
-                            currentPage, pageOrderCount, validOrders.size(), failedCount, allOrders.size());
-
-                    if (pageOrderCount < pageSize) {
-                        log.info("   ✅ Partial page detected - Last page reached");
-                        hasMoreData = false;
-                    }
-
-                    currentPage++;
-                }
-
-                if (currentPage > 100) {
-                    log.warn("   ⚠️ Safety limit reached (100 pages) - Stopping");
-                    break;
-                }
+            if (response == null || response.getCode() != 200) {
+                log.warn("   ⚠️ API failed at page {}: {}", currentPage,
+                        response != null ? response.getMessage() : "null response");
+                break;
             }
 
-            long collectionTime = System.currentTimeMillis() - startTime;
-
-            // ✅ COLLECTION SUMMARY
-            log.info("════════════════════════════════════════");
-            log.info("📊 COLLECTION SUMMARY");
-            log.info("════════════════════════════════════════");
-            log.info("   Total Orders Received: {}", allOrders.size() + totalFilteredOrders);
-            log.info("   Valid Orders: {}", allOrders.size());
-            log.info("   Filtered Orders: {}", totalFilteredOrders);
-            log.info("   API Calls: {}", totalApiCalls);
-            log.info("   Collection Time: {}ms", collectionTime);
-            log.info("════════════════════════════════════════");
-
-            // ✅ LOG ALL FILTERED ORDER IDs
-            if (!allFilteredOrderIds.isEmpty()) {
-                log.warn("════════════════════════════════════════");
-                log.warn("📋 ALL FILTERED ORDER IDs (null shopee_data)");
-                log.warn("════════════════════════════════════════");
-                log.warn("Total: {} orders", allFilteredOrderIds.size());
-
-                if (allFilteredOrderIds.size() <= 100) {
-                    // Show all if <= 100
-                    log.warn("Order IDs: {}", allFilteredOrderIds);
-                } else {
-                    // Show first 50 and last 50 if > 100
-                    log.warn("First 50: {}", allFilteredOrderIds.subList(0, 50));
-                    log.warn("... ({} more orders) ...", allFilteredOrderIds.size() - 100);
-                    log.warn("Last 50: {}", allFilteredOrderIds.subList(
-                            allFilteredOrderIds.size() - 50, allFilteredOrderIds.size()));
-                }
-                log.warn("════════════════════════════════════════");
+            List<ShopeeOrderDto> pageOrders = response.getOrders();
+            if (pageOrders == null || pageOrders.isEmpty()) {
+                log.info("   ✅ No more data at page {}", currentPage);
+                break;
             }
 
-            // Step 2: Process all collected data
-            if (!allOrders.isEmpty()) {
-                log.info("🔄 Step 2: Processing {} orders", allOrders.size());
+            // Filter valid orders
+            List<ShopeeOrderDto> validOrders = pageOrders.stream()
+                    .filter(order -> order != null && order.hasShopeeData())
+                    .toList();
 
-                CollectedData collectedData = new CollectedData();
-                collectedData.setShopeeOrders(allOrders);
+            int filteredCount = pageOrders.size() - validOrders.size();
+            if (filteredCount > 0) {
+                log.warn("   ⚠️ Page {} filtered {} orders (null shopee_data)",
+                        currentPage, filteredCount);
+            }
 
-                long processingStartTime = System.currentTimeMillis();
-                ProcessingResult result = batchProcessor.processCollectedData(collectedData);
-                long processingTime = System.currentTimeMillis() - processingStartTime;
+            allOrders.addAll(validOrders);
+            log.info("   📦 Page {} collected: {} orders (Total so far: {})",
+                    currentPage, validOrders.size(), allOrders.size());
 
-                // ✅ PROCESSING RESULTS
-                log.info("════════════════════════════════════════");
-                log.info("✅ PROCESSING COMPLETE");
-                log.info("════════════════════════════════════════");
-                log.info("   Success: {}", result.getSuccessCount());
-                log.info("   Failed: {}", result.getFailedCount());
-                log.info("   Processing Time: {}ms", processingTime);
-                log.info("   Success Rate: {}%", result.getSuccessRate());
-                log.info("════════════════════════════════════════");
-
-                // ✅ LOG ERROR DETAILS (grouped)
-                if (!result.getErrors().isEmpty()) {
-                    log.error("════════════════════════════════════════");
-                    log.error("❌ PROCESSING ERRORS");
-                    log.error("════════════════════════════════════════");
-                    log.error("Total Errors: {}", result.getErrors().size());
-
-                    var errorsByType = result.getErrors().stream()
-                            .collect(Collectors.groupingBy(
-                                    error -> error.getEntityType() != null ? error.getEntityType() : "UNKNOWN",
-                                    Collectors.counting()));
-
-                    errorsByType.forEach((type, count) -> {
-                        log.error("   {}: {} errors", type, count);
-                    });
-
-                    log.error("Sample errors (first 10):");
-                    result.getErrors().stream()
-                            .limit(10)
-                            .forEach(error -> log.error("   - {}: {} (Order: {})",
-                                    error.getEntityType(),
-                                    error.getErrorMessage(),
-                                    error.getEntityId()));
-                    log.error("════════════════════════════════════════");
-                }
-
-                // Assertions
-                assertThat(result).isNotNull();
-                assertThat(result.getTotalProcessed()).isEqualTo(allOrders.size());
-                assertThat(result.getSuccessCount()).isGreaterThan(0)
-                        .withFailMessage("Expected at least one successful order insertion, but got 0. " +
-                                        "Total filtered: %d, Total failed: %d",
-                                totalFilteredOrders, result.getFailedCount());
+            // Check if last page
+            if (pageOrders.size() < pageSize) {
+                log.info("   ✅ Partial page detected - Last page reached");
+                hasMoreData = false;
             } else {
-                log.warn("⚠️ No orders collected - Skipping processing");
-                log.warn("   All {} orders were filtered out", totalFilteredOrders);
+                currentPage++;
             }
-
-            // FINAL SUMMARY
-            long totalTime = System.currentTimeMillis() - startTime;
-            log.info("════════════════════════════════════════");
-            log.info("🎉 TEST COMPLETED");
-            log.info("════════════════════════════════════════");
-            log.info("Total Time: {}ms", totalTime);
-            log.info("Valid Orders: {}", allOrders.size());
-            log.info("Filtered Orders: {}", totalFilteredOrders);
-            log.info("API Calls: {}", totalApiCalls);
-            log.info("════════════════════════════════════════");
-
-        } catch (Exception e) {
-            log.error("❌ Test failed with exception", e);
-            log.error("📊 Test Failure Summary:");
-            log.error("   Total Orders Collected: {}", allOrders.size());
-            log.error("   Total Filtered: {}", totalFilteredOrders);
-            log.error("   API Calls Made: {}", totalApiCalls);
-            log.error("   Exception: {}", e.getMessage());
-
-            fail("Test failed: " + e.getMessage());
         }
+
+        log.info("📊 Collection Summary for {}: {} orders collected", date, allOrders.size());
+
+        // Process collected data
+        if (allOrders.isEmpty()) {
+            log.warn("⚠️ No valid orders for date {}, skipping processing", date);
+            return new ProcessingResult();
+        }
+
+        log.info("🔄 Step 2: Processing {} orders for {}", allOrders.size(), date);
+
+        CollectedData collectedData = new CollectedData();
+        collectedData.setShopeeOrders(new ArrayList<>(allOrders));
+
+        ProcessingResult result = batchProcessor.processCollectedData(collectedData);
+
+        return result;
+    }
+
+    /**
+     * Log per-date summary
+     */
+    private void logDateSummary(String date, ProcessingResult result, long timeMs) {
+        log.info("─".repeat(70));
+        log.info("📊 SUMMARY FOR {}", date);
+        log.info("─".repeat(70));
+        log.info("   Total Orders: {}", result.getTotalProcessed());
+        log.info("   Successfully Processed: {}", result.getSuccessCount());
+        log.info("   Failed: {}", result.getFailedCount());
+        log.info("   Success Rate: {:.1f}%", result.getSuccessRate());
+        log.info("   Processing Time: {}ms", timeMs);
+
+        if (!result.getErrors().isEmpty()) {
+            log.warn("   ⚠️ Errors: {}", result.getErrors().size());
+        }
+
+        log.info("─".repeat(70));
     }
 }

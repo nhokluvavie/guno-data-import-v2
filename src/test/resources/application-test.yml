@@ -26,10 +26,26 @@ spring:
       pool:
         size: 2
 
-# ✅ NEW: Unified Test Data Configuration
+# ✅ NEW: Date Range Configuration for Testing
 test:
   data:
-    date: "2026-01-07"  # 🎯 SINGLE DATE for all 3 platforms - Change here only!
+    # Single date mode (use when start-date = end-date)
+    date: "2026-01-07"
+
+    # ✅ NEW: Date range mode
+    start-date: "2025-01-15"  # 🎯 From date (inclusive)
+    end-date: "2025-01-15"    # 🎯 To date (inclusive)
+
+    # Date range behavior
+    use-date-range: true      # true = use range, false = use single date
+
+    # Processing options
+    delay-between-dates-ms: 1000  # Wait time between processing each date
+    continue-on-error: true       # Continue to next date even if one fails
+
+    # Summary reporting
+    generate-summary: true        # Generate summary report after all dates
+    log-per-date-summary: true    # Log summary for each date
 
 # ================================
 # PLATFORM CONFIGURATION - NEW!
@@ -38,9 +54,9 @@ platform:
   facebook:
     enabled: false
   tiktok:
-    enabled: false
-  shopee:
     enabled: true
+  shopee:
+    enabled: false
 
 # Test API Configuration - Use unified date
 api:

@@ -35,7 +35,7 @@ platform:
   tiktok:
     enabled: ${TIKTOK_ENABLED:true}
   shopee:
-    enabled: ${SHOPEE_ENABLED:false}
+    enabled: ${SHOPEE_ENABLED:true}
 
 # ================================
 # API CONFIGURATION

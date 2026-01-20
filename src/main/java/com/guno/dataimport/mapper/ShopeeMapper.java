@@ -203,7 +203,7 @@ public class ShopeeMapper {
                 .refundDate(returnInfo != null && returnInfo.getUpdateTime() != null ?
                         timestampToDateTime(returnInfo.getUpdateTime()).toString() : "")
                 .isExchanged(false)
-                .cancelReason(detail.getCancelReason())
+                .cancelReason(extractCancelReason(order))
                 .cancelTime(detail.getCancelBy() != null && !detail.getCancelBy().isEmpty() && detail.getUpdateTime() != null ?
                         timestampToDateTime(detail.getUpdateTime()).toString() : "")
                 .orderDt(order.getInsertedAt() != null ? order.getInsertedAt().toLocalDate().toString() : "")
@@ -632,5 +632,57 @@ public class ShopeeMapper {
     private boolean isPeakHour(LocalDateTime dateTime) {
         int hour = dateTime.getHour();
         return (hour >= 10 && hour <= 14) || (hour >= 18 && hour <= 22);
+    }
+
+    /**
+     * Extract cancel reason with proper priority
+     *
+     * Priority:
+     * 1. If has order_return → use order_return.reason (return/refund reason)
+     * 2. Otherwise → use order_detail.cancel_reason (cancellation reason)
+     * 3. Otherwise → null
+     */
+    private String extractCancelReason(ShopeeOrderDto order) {
+        if (order == null) return null;
+
+        // Priority 1: Check order_return for reason
+        if (order.hasOrderReturn()) {
+            ShopeeOrderReturn returnInfo = order.getOrderReturn();
+
+            // First try "reason" field (enum code like "DIFFERENT_DESCRIPTION")
+            if (returnInfo.getReason() != null &&
+                    !returnInfo.getReason().trim().isEmpty()) {
+                return returnInfo.getReason();
+            }
+
+            // Fallback to "text_reason" if available (more detailed)
+            if (returnInfo.getTextReason() != null &&
+                    !returnInfo.getTextReason().trim().isEmpty()) {
+                return returnInfo.getTextReason();
+            }
+        }
+
+        // Priority 2: Check order_detail.cancel_reason
+        ShopeeOrderDetail detail = order.getOrderDetail();
+        if (detail != null) {
+            if (detail.getCancelReason() != null &&
+                    !detail.getCancelReason().trim().isEmpty()) {
+                return detail.getCancelReason();
+            }
+
+            // If order status is CANCELLED but no specific reason
+            String orderStatus = order.getShopeeOrderStatus();
+            if (orderStatus != null &&
+                    orderStatus.equalsIgnoreCase("CANCELLED")) {
+                // Check who cancelled
+                if (detail.getCancelBy() != null &&
+                        !detail.getCancelBy().trim().isEmpty()) {
+                    return "CANCELLED_BY_" + detail.getCancelBy();
+                }
+                return "ORDER_CANCELLED";
+            }
+        }
+
+        return null;
     }
 }

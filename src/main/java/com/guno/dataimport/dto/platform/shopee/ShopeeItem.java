@@ -101,7 +101,7 @@ public class ShopeeItem {
     public String getSkuOrDefault() {
         if (modelSku != null && !modelSku.isEmpty()) return modelSku;
         if (itemSku != null && !itemSku.isEmpty()) return itemSku;
-        return "SHOPEE_" + itemId + "_" + modelId;
+        return "SHOPEE_" + itemId + "_" + modelId + "_" + addOnDealId;
     }
 
     public Integer getQuantity() {

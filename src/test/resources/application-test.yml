@@ -33,8 +33,8 @@ test:
     date: "2026-01-07"
 
     # ✅ NEW: Date range mode
-    start-date: "2025-01-15"  # 🎯 From date (inclusive)
-    end-date: "2025-01-15"    # 🎯 To date (inclusive)
+    start-date: "2026-01-15"  # 🎯 From date (inclusive)
+    end-date: "2026-01-15"    # 🎯 To date (inclusive)
 
     # Date range behavior
     use-date-range: true      # true = use range, false = use single date
@@ -54,9 +54,9 @@ platform:
   facebook:
     enabled: false
   tiktok:
-    enabled: true
-  shopee:
     enabled: false
+  shopee:
+    enabled: true
 
 # Test API Configuration - Use unified date
 api:

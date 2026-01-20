@@ -206,7 +206,7 @@ public class TikTokMapper {
                 .refundAmount(extractRefundAmount(refund))
                 .refundDate(extractRefundDate(refund))
                 .isExchanged(refund != null && "REPLACEMENT".equals(refund.getReturnType()))
-                .cancelReason("CANCEL".equals(detail.getStatus()) ? "USER_CANCELLED" : null)
+                .cancelReason(extractCancelReason(order))
                 .cancelTime(extractCancelTime(order))
                 .orderDt(order.getInsertedAt().toLocalDate().toString())
                 .build();
@@ -625,5 +625,57 @@ public class TikTokMapper {
         Instant instant = Instant.ofEpochSecond(detail.getCancelTime());
         LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.of("Asia/Ho_Chi_Minh"));
         return dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+
+    /**
+     * Extract cancel reason with proper priority
+     *
+     * Priority:
+     * 1. If has return_refund → use return_reason_text (most detailed)
+     * 2. If has return_refund → fallback to return_reason
+     * 3. If has order_detail.cancel_reason → use it
+     * 4. If status is CANCELLED → use generic message
+     * 5. Otherwise → null
+     */
+    private String extractCancelReason(TikTokOrderDto order) {
+        if (order == null) return null;
+
+        // Priority 1: Check return_refund for detailed reason
+        if (order.hasReturnRefund()) {
+            TikTokReturnRefund returnRefund = order.getReturnRefund();
+
+            // First try return_reason_text (contains Vietnamese description)
+            if (returnRefund.getReturnReasonText() != null &&
+                    !returnRefund.getReturnReasonText().trim().isEmpty()) {
+                return returnRefund.getReturnReasonText();
+            }
+
+            // Fallback to return_reason (enum code)
+            if (returnRefund.getReturnReason() != null &&
+                    !returnRefund.getReturnReason().trim().isEmpty()) {
+                return returnRefund.getReturnReason();
+            }
+        }
+
+        // Priority 2: Check order_detail.cancel_reason
+        TikTokOrderDetail detail = order.getOrderDetail();
+        if (detail != null) {
+            if (detail.getCancelReason() != null &&
+                    !detail.getCancelReason().trim().isEmpty()) {
+                return detail.getCancelReason();
+            }
+
+            // Priority 3: If cancelled but no specific reason
+            if (detail.getStatus() != null &&
+                    detail.getStatus().equalsIgnoreCase("CANCELLED")) {
+                // Check who cancelled
+                if (detail.getCancellationInitiator() != null) {
+                    return "CANCELLED_BY_" + detail.getCancellationInitiator();
+                }
+                return "ORDER_CANCELLED";
+            }
+        }
+
+        return null;
     }
 }
